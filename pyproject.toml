@@ -1,0 +1,15 @@
+[project]
+name = "discord-acp-bridge"
+version = "0.1.0"
+description = "Discord Bridge for ACP Server"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "mypy>=1.19.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.0",
+]
