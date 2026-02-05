@@ -231,7 +231,7 @@ class ACPClient:
                 """接続確立時のコールバック."""
                 logger.info("Connected to ACP agent")
 
-        return ClientImpl(self)  # type: ignore[return-value]
+        return ClientImpl(self)
 
     async def initialize(self, working_directory: str) -> str:
         """
