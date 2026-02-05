@@ -27,6 +27,7 @@ select = [
 ]
 ignore = [
     "E501",  # Ignore line length errors (we use auto-formatting)
+    "TC002",  # Allow runtime imports that are also used in type hints
 ]
 
 [format]
