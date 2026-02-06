@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -26,6 +27,10 @@ from discord_acp_bridge.infrastructure.acp_client import ACPClient
 
 if TYPE_CHECKING:
     from discord_acp_bridge.infrastructure.config import Config
+
+# コールバック型定義
+MessageCallback = Callable[[int, str], Awaitable[None]]  # (thread_id, message) -> None
+TimeoutCallback = Callable[[int], Awaitable[None]]  # (thread_id) -> None
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +144,23 @@ class ACPTimeoutError(Exception):
 class SessionService:
     """セッション管理サービス."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self,
+        config: Config,
+        on_message: MessageCallback | None = None,
+        on_timeout: TimeoutCallback | None = None,
+    ) -> None:
         """
         Initialize SessionService.
 
         Args:
             config: アプリケーション設定
+            on_message: ACPからのメッセージ受信時のコールバック
+            on_timeout: セッションタイムアウト時のコールバック
         """
         self._config = config
+        self._on_message_callback = on_message
+        self._on_timeout_callback = on_timeout
         # セッション管理（user_id -> Session）
         self._sessions: dict[int, Session] = {}
         # セッションID逆引きマップ（session_id -> Session）
@@ -254,6 +268,7 @@ class SessionService:
         logger.info("Sending prompt to session %s: %s", session_id, content[:50])
 
         # 状態をPromptingに変更
+        original_state = session.state
         session.state = SessionState.PROMPTING
         session.last_activity_at = datetime.now()
 
@@ -268,11 +283,13 @@ class SessionService:
                 )
 
             await acp_client.send_prompt(session.acp_session_id, content)
+            # 送信成功後、状態をActiveに戻す
+            session.state = SessionState.ACTIVE
 
-        finally:
-            # 状態をActiveに戻す
-            if session.state == SessionState.PROMPTING:
-                session.state = SessionState.ACTIVE
+        except Exception:
+            # エラー時は元の状態に戻す
+            session.state = original_state
+            raise
 
     def get_active_session(self, user_id: int) -> Session | None:
         """
@@ -403,6 +420,23 @@ class SessionService:
         """
         return self._session_map.get(session_id)
 
+    async def _safe_callback_wrapper(
+        self, callback: MessageCallback | TimeoutCallback, *args: int | str
+    ) -> None:
+        """
+        コールバックを安全に実行するラッパー.
+
+        例外が発生してもログに記録し、タスクをクラッシュさせない。
+
+        Args:
+            callback: 実行するコールバック関数
+            *args: コールバックに渡す引数
+        """
+        try:
+            await callback(*args)  # type: ignore[arg-type]
+        except Exception:
+            logger.exception("Error in callback: %s", callback.__name__)
+
     def _on_session_update(self, acp_session_id: str, update: ACPUpdate) -> None:
         """
         ACP Clientからのsession_update通知を受け取る.
@@ -432,8 +466,19 @@ class SessionService:
             type(update).__name__,
         )
 
-        # TODO: 更新内容をDiscordに転送する処理を実装
-        # MVP段階では、ログ出力のみ
+        # エージェントのメッセージをDiscordに転送
+        if isinstance(update, AgentMessageChunk) and update.text:
+            if self._on_message_callback and session.thread_id:
+                import asyncio
+
+                # 非同期コールバックをタスクとして実行（エラーハンドリング付き）
+                coro = self._safe_callback_wrapper(
+                    self._on_message_callback, session.thread_id, update.text
+                )
+                asyncio.create_task(coro)
+                logger.debug(
+                    "Sent message chunk to Discord (thread: %d)", session.thread_id
+                )
 
     def _on_timeout(self, acp_session_id: str) -> None:
         """
@@ -469,5 +514,15 @@ class SessionService:
         if session.id in self._acp_clients:
             del self._acp_clients[session.id]
 
-        # TODO: Discordに通知を送信する処理を実装
-        # MVP段階では、ログ出力のみ
+        # Discordにタイムアウト通知を送信
+        if self._on_timeout_callback and session.thread_id:
+            import asyncio
+
+            # 非同期コールバックをタスクとして実行（エラーハンドリング付き）
+            coro = self._safe_callback_wrapper(
+                self._on_timeout_callback, session.thread_id
+            )
+            asyncio.create_task(coro)
+            logger.debug(
+                "Sent timeout notification to Discord (thread: %d)", session.thread_id
+            )
