@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -26,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from discord_acp_bridge.application.project import Project  # noqa: TC001
 from discord_acp_bridge.infrastructure.acp_client import ACPClient
+from discord_acp_bridge.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
     from discord_acp_bridge.infrastructure.config import Config
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 MessageCallback = Callable[[int, str], Awaitable[None]]  # (thread_id, message) -> None
 TimeoutCallback = Callable[[int], Awaitable[None]]  # (thread_id) -> None
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SessionState(str, Enum):

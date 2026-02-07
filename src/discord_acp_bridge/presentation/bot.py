@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 import discord
 from discord import Intents, app_commands
 from discord.ext import commands
@@ -11,8 +9,9 @@ from discord.ext import commands
 from discord_acp_bridge.application.project import ProjectService  # noqa: TC001
 from discord_acp_bridge.application.session import SessionService  # noqa: TC001
 from discord_acp_bridge.infrastructure.config import Config  # noqa: TC001
+from discord_acp_bridge.infrastructure.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ACPBot(commands.Bot):

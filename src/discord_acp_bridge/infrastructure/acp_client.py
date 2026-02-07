@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -35,12 +34,14 @@ from acp.schema import (
     UserMessageChunk,
 )
 
+from discord_acp_bridge.infrastructure.logging import get_logger
+
 if TYPE_CHECKING:
     import asyncio.subprocess as aio_subprocess
 
     from acp.terminal import TerminalHandle
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Watchdog Timer: 30分間無応答でタイムアウト
 WATCHDOG_TIMEOUT = 30 * 60  # 30 minutes in seconds

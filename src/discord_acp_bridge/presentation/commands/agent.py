@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import discord
@@ -13,12 +12,13 @@ from discord_acp_bridge.application.session import (
     ACPConnectionError,
     SessionNotFoundError,
 )
+from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
 if TYPE_CHECKING:
     from discord_acp_bridge.presentation.bot import ACPBot
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentCommands(commands.Cog):

@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from discord_acp_bridge.infrastructure.logging import get_logger
+
 if TYPE_CHECKING:
     from discord_acp_bridge.infrastructure.config import Config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Project(BaseModel):

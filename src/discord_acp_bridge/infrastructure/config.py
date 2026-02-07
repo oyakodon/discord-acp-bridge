@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-import logging
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-logger = logging.getLogger(__name__)
 
 
 class Config(BaseSettings):
@@ -44,6 +41,12 @@ class Config(BaseSettings):
     trusted_paths: list[str] = Field(
         default=[],
         description="プロジェクトとして許可するディレクトリのルートパスのリスト",
+    )
+
+    # ロギング設定
+    log_level: str = Field(
+        default="INFO",
+        description="ログレベル（DEBUG, INFO, WARNING, ERROR, CRITICAL）",
     )
 
     @field_validator("agent_command", mode="before")
