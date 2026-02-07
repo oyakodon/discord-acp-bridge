@@ -24,7 +24,7 @@ from acp.schema import (
 from pydantic import BaseModel, Field
 
 from discord_acp_bridge.application.project import Project  # noqa: TC001
-from discord_acp_bridge.infrastructure.acp_client import ACPClient
+from discord_acp_bridge.infrastructure.acp_client import ACPClient, UsageUpdate
 from discord_acp_bridge.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ class SessionState(str, Enum):
     CLOSED = "closed"
 
 
-# ACP Update型のエイリアス
+# ACP Update型のエイリアス（UsageUpdateは独自定義、将来のSDK対応に備える）
 ACPUpdate = (
     UserMessageChunk
     | AgentMessageChunk
@@ -60,6 +60,7 @@ ACPUpdate = (
     | AvailableCommandsUpdate
     | CurrentModeUpdate
     | SessionInfoUpdate
+    | UsageUpdate
 )
 
 
@@ -77,6 +78,11 @@ class Session(BaseModel):
     # モデル情報
     available_models: list[str] = Field(default_factory=list)
     current_model_id: str | None = None
+    # 使用量情報
+    context_used: int | None = None
+    context_size: int | None = None
+    total_cost: float | None = None
+    cost_currency: str | None = None
 
     def is_active(self) -> bool:
         """
@@ -784,6 +790,22 @@ class SessionService:
                     session.id,
                     session.available_models,
                 )
+
+        # UsageUpdate通知を処理（使用量更新通知）
+        if isinstance(update, UsageUpdate):
+            session.context_used = update.used
+            session.context_size = update.size
+            if update.cost is not None:
+                session.total_cost = update.cost.amount
+                session.cost_currency = update.cost.currency
+            logger.debug(
+                "Usage updated for session %s: %d/%d tokens, cost: %s %s",
+                session.id,
+                update.used,
+                update.size,
+                update.cost.amount if update.cost else "N/A",
+                update.cost.currency if update.cost else "",
+            )
 
         # エージェントのメッセージをバッファに追加
         if (

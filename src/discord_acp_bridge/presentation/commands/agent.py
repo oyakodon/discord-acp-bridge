@@ -514,6 +514,92 @@ class AgentCommands(commands.Cog):
             for model in filtered_models[:25]
         ]
 
+    @agent_group.command(name="usage", description="セッションの使用量情報を表示")
+    @is_allowed_user()
+    async def session_usage(self, interaction: discord.Interaction) -> None:
+        """
+        セッションの使用量情報を表示する.
+
+        Args:
+            interaction: Discord Interaction
+        """
+        logger.info(
+            "User %s (ID: %d) requested session usage",
+            interaction.user.name,
+            interaction.user.id,
+        )
+
+        try:
+            # アクティブなセッションを取得
+            session = self.bot.session_service.get_active_session(interaction.user.id)
+
+            if session is None:
+                await interaction.response.send_message(
+                    "現在、アクティブなセッションはありません。\n"
+                    "`/agent start` でセッションを開始してください。",
+                    ephemeral=True,
+                )
+                return
+
+            # 使用量メッセージを構築
+            usage_lines = [
+                "**エージェントセッション使用量:**",
+                f"プロジェクト: `{session.project.path}` (ID: {session.project.id})",
+                f"作成日時: {session.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"最終応答: {session.last_activity_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+            ]
+
+            # コンテキスト使用量
+            if session.context_used is not None and session.context_size is not None:
+                # ゼロ除算を防ぐ
+                if session.context_size > 0:
+                    usage_percent = (session.context_used / session.context_size) * 100
+                    usage_lines.extend([
+                        "**コンテキスト使用量:**",
+                        f"使用トークン数: `{session.context_used:,}` / `{session.context_size:,}`",
+                        f"使用率: `{usage_percent:.1f}%`",
+                        "",
+                    ])
+                else:
+                    # context_sizeが0の場合
+                    usage_lines.extend([
+                        "**コンテキスト使用量:**",
+                        f"使用トークン数: `{session.context_used:,}`",
+                        "（コンテキストサイズ: 0）",
+                        "",
+                    ])
+            else:
+                usage_lines.extend([
+                    "**コンテキスト使用量:**",
+                    "（まだ使用量情報が取得できていません）",
+                    "",
+                ])
+
+            # コスト情報
+            if session.total_cost is not None:
+                currency = session.cost_currency or "USD"
+                usage_lines.extend([
+                    "**累積コスト:**",
+                    f"`{session.total_cost:.4f} {currency}`",
+                ])
+            else:
+                usage_lines.extend([
+                    "**累積コスト:**",
+                    "（まだコスト情報が取得できていません）",
+                ])
+
+            message = "\n".join(usage_lines)
+            await interaction.response.send_message(message, ephemeral=True)
+
+            logger.info("Sent session usage to user %d", interaction.user.id)
+
+        except Exception:
+            logger.exception("Error getting session usage")
+            await interaction.response.send_message(
+                "エラーが発生しました。ログを確認してください。", ephemeral=True
+            )
+
 
 async def setup(bot: ACPBot) -> None:
     """

@@ -34,6 +34,7 @@ from acp.schema import (
     ToolCallUpdate,
     UserMessageChunk,
 )
+from pydantic import BaseModel
 
 from discord_acp_bridge.infrastructure.logging import get_logger
 
@@ -47,6 +48,25 @@ logger = get_logger(__name__)
 # Watchdog Timer: 30分間無応答でタイムアウト
 WATCHDOG_TIMEOUT = 30 * 60  # 30 minutes in seconds
 
+
+# 使用量更新の型定義（ACP SDK v0.7.1ではまだ未実装）
+class UsageUpdateCost(BaseModel):
+    """使用量更新のコスト情報."""
+
+    amount: float
+    currency: str = "USD"
+
+
+class UsageUpdate(BaseModel):
+    """使用量更新通知（ACP RFC準拠、将来のSDK対応に備えた型定義）."""
+
+    session_update: str = "usage_update"
+    used: int
+    size: int
+    cost: UsageUpdateCost | None = None
+    field_meta: dict[str, Any] | None = None
+
+
 # コールバック型定義
 SessionUpdateCallback = Callable[
     [
@@ -59,7 +79,8 @@ SessionUpdateCallback = Callable[
         | AgentPlanUpdate
         | AvailableCommandsUpdate
         | CurrentModeUpdate
-        | SessionInfoUpdate,
+        | SessionInfoUpdate
+        | UsageUpdate,
     ],
     None,
 ]
@@ -144,17 +165,59 @@ class ACPClient:
                 | AgentPlanUpdate
                 | AvailableCommandsUpdate
                 | CurrentModeUpdate
-                | SessionInfoUpdate,
+                | SessionInfoUpdate
+                | UsageUpdate
+                | dict[str, Any],  # 未知の通知タイプに対応
                 **kwargs: Any,
             ) -> None:
                 """session/update 通知を受け取る."""
                 # Watchdog Timer をリセット
                 self.parent._reset_watchdog()
 
+                # TODO: ACP SDK v0.8+ でUsageUpdateが正式サポートされたら、
+                # dict[str, Any]を削除して型安全性を向上させる
+                # 辞書形式の場合、UsageUpdateに変換を試みる
+                parsed_update: (
+                    UserMessageChunk
+                    | AgentMessageChunk
+                    | AgentThoughtChunk
+                    | ToolCallStart
+                    | ToolCallProgress
+                    | AgentPlanUpdate
+                    | AvailableCommandsUpdate
+                    | CurrentModeUpdate
+                    | SessionInfoUpdate
+                    | UsageUpdate
+                )
+                if isinstance(update, dict):
+                    session_update_type = update.get("session_update")
+                    if session_update_type == "usage_update":
+                        try:
+                            parsed_update = UsageUpdate.model_validate(update)
+                            logger.debug("Parsed usage_update from dict")
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to parse usage_update (type: %s): %s. Error: %s",
+                                session_update_type,
+                                update,
+                                e,
+                            )
+                            return
+                    else:
+                        # 未知の通知タイプは無視（将来の拡張に備えてINFOレベル）
+                        logger.info(
+                            "Unknown session_update type '%s', ignoring: %s",
+                            session_update_type,
+                            update,
+                        )
+                        return
+                else:
+                    parsed_update = update
+
                 # コールバックを呼び出し
                 if self.parent.on_session_update:
                     try:
-                        self.parent.on_session_update(session_id, update)
+                        self.parent.on_session_update(session_id, parsed_update)
                     except Exception:
                         logger.exception("Error in session_update callback")
 
