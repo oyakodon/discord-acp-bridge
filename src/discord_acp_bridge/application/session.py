@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -16,6 +17,7 @@ from acp.schema import (
     AvailableCommandsUpdate,
     CurrentModeUpdate,
     SessionInfoUpdate,
+    TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
     UserMessageChunk,
@@ -169,6 +171,10 @@ class SessionService:
         self._thread_sessions: dict[int, str] = {}  # thread_id -> session_id
         # ACP Clientのマップ（session_id -> ACPClient）
         self._acp_clients: dict[str, ACPClient] = {}
+        # メッセージバッファリング用（thread_id -> buffer）
+        self._message_buffers: dict[int, list[str]] = {}
+        # バッファフラッシュタスク（thread_id -> Task）
+        self._flush_tasks: dict[int, asyncio.Task] = {}
 
     async def create_session(
         self, user_id: int, project: Project, thread_id: int | None = None
@@ -348,6 +354,14 @@ class SessionService:
 
         logger.info("Closing session: %s", session_id)
 
+        # バッファに残っているメッセージを送信
+        if session.thread_id is not None:
+            # フラッシュタスクをキャンセル
+            if session.thread_id in self._flush_tasks:
+                self._flush_tasks[session.thread_id].cancel()
+            # バッファをフラッシュ
+            await self._flush_message_buffer(session.thread_id)
+
         acp_client = self._acp_clients.get(session_id)
         if acp_client is not None and session.acp_session_id is not None:
             try:
@@ -386,6 +400,14 @@ class SessionService:
             raise SessionNotFoundError(session_id)
 
         logger.warning("Force killing session: %s", session_id)
+
+        # バッファに残っているメッセージを送信
+        if session.thread_id is not None:
+            # フラッシュタスクをキャンセル
+            if session.thread_id in self._flush_tasks:
+                self._flush_tasks[session.thread_id].cancel()
+            # バッファをフラッシュ
+            await self._flush_message_buffer(session.thread_id)
 
         acp_client = self._acp_clients.get(session_id)
         if acp_client is not None:
@@ -437,6 +459,73 @@ class SessionService:
         except Exception:
             logger.exception("Error in callback: %s", callback.__name__)
 
+    async def _flush_message_buffer(self, thread_id: int) -> None:
+        """
+        メッセージバッファをフラッシュしてDiscordに送信する.
+
+        Args:
+            thread_id: スレッドID
+        """
+        # バッファが空の場合は何もしない
+        if (
+            thread_id not in self._message_buffers
+            or not self._message_buffers[thread_id]
+        ):
+            return
+
+        # バッファの内容を取得してクリア
+        buffer = self._message_buffers[thread_id]
+        self._message_buffers[thread_id] = []
+
+        # タスクをクリーンアップ
+        if thread_id in self._flush_tasks:
+            del self._flush_tasks[thread_id]
+
+        # バッファの内容を結合して送信
+        content = "".join(buffer)
+        if content and self._on_message_callback:
+            try:
+                await self._on_message_callback(thread_id, content)
+                logger.debug(
+                    "Flushed message buffer to thread %d (%d chars)",
+                    thread_id,
+                    len(content),
+                )
+            except Exception:
+                logger.exception(
+                    "Error flushing message buffer to thread %d", thread_id
+                )
+
+    def _schedule_buffer_flush(self, thread_id: int, delay: float = 0.5) -> None:
+        """
+        バッファフラッシュをスケジュールする.
+
+        既存のタスクがあればキャンセルして、新しいタスクをスケジュールする。
+
+        Args:
+            thread_id: スレッドID
+            delay: 遅延時間（秒）
+        """
+        # 既存のタスクをキャンセル
+        if thread_id in self._flush_tasks:
+            self._flush_tasks[thread_id].cancel()
+
+        # 新しいフラッシュタスクを作成
+        async def delayed_flush() -> None:
+            try:
+                await asyncio.sleep(delay)
+                await self._flush_message_buffer(thread_id)
+            except asyncio.CancelledError:
+                # キャンセルは正常な動作なので再スロー
+                raise
+            except Exception:
+                # その他の例外はログに記録
+                logger.exception(
+                    "Unexpected error in delayed flush task for thread %d", thread_id
+                )
+
+        self._flush_tasks[thread_id] = asyncio.create_task(delayed_flush())
+
     def _on_session_update(self, acp_session_id: str, update: ACPUpdate) -> None:
         """
         ACP Clientからのsession_update通知を受け取る.
@@ -466,18 +555,25 @@ class SessionService:
             type(update).__name__,
         )
 
-        # エージェントのメッセージをDiscordに転送
-        if isinstance(update, AgentMessageChunk) and update.text:
+        # エージェントのメッセージをバッファに追加
+        if (
+            isinstance(update, AgentMessageChunk)
+            and isinstance(update.content, TextContentBlock)
+            and update.content.text
+        ):
             if self._on_message_callback and session.thread_id:
-                import asyncio
+                # バッファに追加
+                if session.thread_id not in self._message_buffers:
+                    self._message_buffers[session.thread_id] = []
+                self._message_buffers[session.thread_id].append(update.content.text)
 
-                # 非同期コールバックをタスクとして実行（エラーハンドリング付き）
-                coro = self._safe_callback_wrapper(
-                    self._on_message_callback, session.thread_id, update.text
-                )
-                asyncio.create_task(coro)
+                # バッファフラッシュをスケジュール（既存のタスクがあればキャンセルして再スケジュール）
+                self._schedule_buffer_flush(session.thread_id)
+
                 logger.debug(
-                    "Sent message chunk to Discord (thread: %d)", session.thread_id
+                    "Added message chunk to buffer (thread: %d, buffer size: %d)",
+                    session.thread_id,
+                    len(self._message_buffers[session.thread_id]),
                 )
 
     def _on_timeout(self, acp_session_id: str) -> None:
@@ -502,6 +598,34 @@ class SessionService:
 
         logger.error("Session %s timed out", session.id)
 
+        # バッファに残っているメッセージをフラッシュしてからタイムアウト通知を送信
+        if session.thread_id is not None:
+            thread_id = session.thread_id  # 型の絞り込みを保持するためにキャプチャ
+
+            # フラッシュタスクをキャンセル
+            if thread_id in self._flush_tasks:
+                self._flush_tasks[thread_id].cancel()
+
+            # バッファをフラッシュしてからタイムアウト通知を送信
+            async def flush_and_notify() -> None:
+                try:
+                    # バッファをフラッシュ
+                    await self._flush_message_buffer(thread_id)
+                    # フラッシュ後にタイムアウト通知を送信
+                    if self._on_timeout_callback:
+                        await self._on_timeout_callback(thread_id)
+                except Exception:
+                    logger.exception(
+                        "Error flushing buffer or sending timeout notification for thread %d",
+                        thread_id,
+                    )
+
+            asyncio.create_task(flush_and_notify())
+            logger.debug(
+                "Scheduled buffer flush and timeout notification for thread %d",
+                thread_id,
+            )
+
         # セッションを強制終了
         # 注: この時点でACPプロセスは既にkillされている
         session.state = SessionState.CLOSED
@@ -513,16 +637,3 @@ class SessionService:
             del self._thread_sessions[session.thread_id]
         if session.id in self._acp_clients:
             del self._acp_clients[session.id]
-
-        # Discordにタイムアウト通知を送信
-        if self._on_timeout_callback and session.thread_id:
-            import asyncio
-
-            # 非同期コールバックをタスクとして実行（エラーハンドリング付き）
-            coro = self._safe_callback_wrapper(
-                self._on_timeout_callback, session.thread_id
-            )
-            asyncio.create_task(coro)
-            logger.debug(
-                "Sent timeout notification to Discord (thread: %d)", session.thread_id
-            )
