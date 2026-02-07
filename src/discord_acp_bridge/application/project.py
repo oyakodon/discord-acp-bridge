@@ -20,7 +20,6 @@ class Project(BaseModel):
 
     id: int
     path: str
-    is_active: bool = False
 
 
 class ProjectNotFoundError(Exception):
@@ -48,7 +47,6 @@ class ProjectService:
             config: アプリケーション設定
         """
         self._config = config
-        self._active_project_id: int | None = None
 
     def _is_path_trusted(self, path: Path) -> bool:
         """
@@ -113,36 +111,10 @@ class ProjectService:
         projects = []
         for idx, path in enumerate(discovered_paths):
             project_id = idx + 1
-            is_active = project_id == self._active_project_id
-            projects.append(Project(id=project_id, path=path, is_active=is_active))
+            projects.append(Project(id=project_id, path=path))
 
         logger.debug("Listed %d projects from trusted paths", len(projects))
         return projects
-
-    def get_active_project(self) -> Project | None:
-        """
-        現在アクティブなプロジェクトを取得する.
-
-        Returns:
-            アクティブなプロジェクト。なければNone
-        """
-        if self._active_project_id is None:
-            logger.debug("No active project")
-            return None
-
-        projects = self.list_projects()
-        for project in projects:
-            if project.id == self._active_project_id:
-                logger.debug("Active project: %s (ID: %d)", project.path, project.id)
-                return project
-
-        # アクティブIDが設定されているが、プロジェクトリストに存在しない場合
-        logger.warning(
-            "Active project ID %d not found in project list. Resetting.",
-            self._active_project_id,
-        )
-        self._active_project_id = None
-        return None
 
     def get_project_by_id(self, project_id: int) -> Project:
         """
@@ -180,24 +152,3 @@ class ProjectService:
 
         logger.error("Project #%d not found", project_id)
         raise ProjectNotFoundError(project_id)
-
-    def switch_project(self, project_id: int) -> Project:
-        """
-        指定されたプロジェクトをアクティブに切り替える.
-
-        Args:
-            project_id: プロジェクトID
-
-        Returns:
-            切り替え後のプロジェクト
-
-        Raises:
-            ProjectNotFoundError: 指定されたIDのプロジェクトが存在しない場合
-            ValueError: プロジェクトがTrusted Path配下にない場合（防御的チェック）
-        """
-        # get_project_by_idを使用してプロジェクトを取得
-        project = self.get_project_by_id(project_id)
-
-        self._active_project_id = project_id
-        logger.info("Switched to project #%d: %s", project_id, project.path)
-        return Project(id=project.id, path=project.path, is_active=True)

@@ -8,7 +8,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from discord_acp_bridge.application.project import ProjectNotFoundError
 from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
@@ -30,11 +29,7 @@ class ProjectCommands(commands.Cog):
         """
         self.bot = bot
 
-    project_group = app_commands.Group(
-        name="project", description="プロジェクト管理コマンド"
-    )
-
-    @project_group.command(name="list", description="登録済みプロジェクト一覧を表示")
+    @app_commands.command(name="projects", description="登録済みプロジェクト一覧を表示")
     @is_allowed_user()
     async def list_projects(self, interaction: discord.Interaction) -> None:
         """
@@ -63,9 +58,7 @@ class ProjectCommands(commands.Cog):
 
             # プロジェクト一覧を整形
             lines = ["**登録済みプロジェクト:**"]
-            for project in projects:
-                status = "✅ **Active**" if project.is_active else ""
-                lines.append(f"{project.id}. `{project.path}` {status}")
+            lines.extend(f"{project.id}. `{project.path}`" for project in projects)
 
             message = "\n".join(lines)
             await interaction.response.send_message(message, ephemeral=True)
@@ -74,55 +67,6 @@ class ProjectCommands(commands.Cog):
 
         except Exception:
             logger.exception("Error listing projects")
-            await interaction.response.send_message(
-                "エラーが発生しました。ログを確認してください。", ephemeral=True
-            )
-
-    @project_group.command(name="switch", description="操作対象プロジェクトを切り替え")
-    @app_commands.describe(project_id="切り替え先のプロジェクトID")
-    @is_allowed_user()
-    async def switch_project(
-        self, interaction: discord.Interaction, project_id: int
-    ) -> None:
-        """
-        操作対象プロジェクトを切り替える.
-
-        Args:
-            interaction: Discord Interaction
-            project_id: 切り替え先のプロジェクトID
-        """
-        logger.info(
-            "User %s (ID: %d) requested to switch to project #%d",
-            interaction.user.name,
-            interaction.user.id,
-            project_id,
-        )
-
-        try:
-            project = self.bot.project_service.switch_project(project_id)
-            await interaction.response.send_message(
-                f"プロジェクト #{project.id} に切り替えました:\n`{project.path}`",
-                ephemeral=True,
-            )
-
-            logger.info(
-                "User %d switched to project #%d", interaction.user.id, project_id
-            )
-
-        except ProjectNotFoundError:
-            logger.warning(
-                "User %d tried to switch to non-existent project #%d",
-                interaction.user.id,
-                project_id,
-            )
-            await interaction.response.send_message(
-                f"プロジェクト #{project_id} が見つかりません。\n"
-                f"`/project list` で登録済みプロジェクトを確認してください。",
-                ephemeral=True,
-            )
-
-        except Exception:
-            logger.exception("Error switching project")
             await interaction.response.send_message(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )

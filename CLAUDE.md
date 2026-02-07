@@ -117,19 +117,20 @@ discord-acp-bridge/
 
 ### MVP（最小限の機能）
 - Discord Bot基盤（Gateway接続、メッセージ送受信）
-- プロジェクト切り替え機能
+- プロジェクト一覧表示
 - 基本的なメッセージのやり取り
 
 ### Discord Slash Commands
 
 | コマンド | 説明 | 引数 |
 |---------|------|------|
-| `/project list` | Trusted Path配下のプロジェクト一覧を表示 | なし |
-| `/project switch` | 操作対象プロジェクトを切り替え | `id` (integer): プロジェクトID |
-| `/agent start` | エージェントセッションを開始 | なし |
+| `/projects` | Trusted Path配下のプロジェクト一覧を表示 | なし |
+| `/agent start` | エージェントセッションを開始 | `project_id` (integer): プロジェクトID |
 | `/agent stop` | エージェントセッションを正常終了 | なし |
 | `/agent kill` | エージェントセッションを強制終了 | なし |
 | `/agent status` | 現在のセッション状態を表示 | なし |
+| `/agent model` | セッションのモデルを切り替える | `model_id` (string): モデルID |
+| `/agent usage` | セッションの使用量情報を表示 | なし |
 
 ### プロジェクト管理
 - プロジェクトは `TRUSTED_PATHS` 環境変数で指定されたディレクトリ配下のディレクトリを自動スキャンして検出される

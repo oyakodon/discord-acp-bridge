@@ -18,10 +18,12 @@ from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
 if TYPE_CHECKING:
-    from discord_acp_bridge.application.project import Project
     from discord_acp_bridge.presentation.bot import ACPBot
 
 logger = get_logger(__name__)
+
+# オートコンプリートの最大表示数（Discordの制限）
+MAX_AUTOCOMPLETE_CHOICES = 25
 
 
 class AgentCommands(commands.Cog):
@@ -41,22 +43,20 @@ class AgentCommands(commands.Cog):
     )
 
     @agent_group.command(name="start", description="エージェントセッションを開始")
-    @app_commands.describe(
-        project_id="プロジェクトID（省略時はアクティブプロジェクト）"
-    )
+    @app_commands.describe(project_id="プロジェクトID")
     @is_allowed_user()
     async def start_session(
-        self, interaction: discord.Interaction, project_id: int | None = None
+        self, interaction: discord.Interaction, project_id: int
     ) -> None:
         """
         エージェントセッションを開始する.
 
         Args:
             interaction: Discord Interaction
-            project_id: プロジェクトID（省略時はアクティブプロジェクト）
+            project_id: プロジェクトID
         """
         logger.info(
-            "User %s (ID: %d) requested to start agent session (project_id: %s)",
+            "User %s (ID: %d) requested to start agent session (project_id: %d)",
             interaction.user.name,
             interaction.user.id,
             project_id,
@@ -85,28 +85,13 @@ class AgentCommands(commands.Cog):
                 return
 
             # プロジェクトを取得
-            target_project: Project | None
-            if project_id is not None:
-                # project_idが指定された場合、そのプロジェクトを取得
-                target_project = self.bot.project_service.get_project_by_id(project_id)
-                logger.info(
-                    "User %d selected project #%d: %s",
-                    interaction.user.id,
-                    project_id,
-                    target_project.path,
-                )
-            else:
-                # project_idが省略された場合、アクティブプロジェクトを取得
-                target_project = self.bot.project_service.get_active_project()
-                if target_project is None:
-                    await interaction.followup.send(
-                        "アクティブなプロジェクトが設定されていません。\n"
-                        "`/project switch <id>` でプロジェクトを選択するか、\n"
-                        "`/agent start project_id:<id>` でプロジェクトを指定してください。",
-                        ephemeral=True,
-                    )
-                    logger.warning("User %d has no active project", interaction.user.id)
-                    return
+            target_project = self.bot.project_service.get_project_by_id(project_id)
+            logger.info(
+                "User %d selected project #%d: %s",
+                interaction.user.id,
+                project_id,
+                target_project.path,
+            )
 
             # スレッドを作成
             if not isinstance(interaction.channel, discord.TextChannel):
@@ -173,7 +158,7 @@ class AgentCommands(commands.Cog):
             logger.warning("Project #%d not found", e.project_id)
             await interaction.followup.send(
                 f"プロジェクト ID {e.project_id} が見つかりません。\n"
-                f"`/project list` でプロジェクト一覧を確認してください。",
+                f"`/projects` でプロジェクト一覧を確認してください。",
                 ephemeral=True,
             )
 
@@ -199,6 +184,43 @@ class AgentCommands(commands.Cog):
             await interaction.followup.send(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )
+
+    @start_session.autocomplete("project_id")
+    async def project_id_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """
+        プロジェクトIDのオートコンプリート.
+
+        Args:
+            interaction: Discord Interaction
+            current: 現在入力中のテキスト
+
+        Returns:
+            オートコンプリートの選択肢
+        """
+        try:
+            projects = self.bot.project_service.list_projects()
+
+            # 入力に部分一致するプロジェクトをフィルタリング
+            # プロジェクトIDまたはパス名で検索
+            filtered_projects = [
+                project
+                for project in projects
+                if current in str(project.id) or current.lower() in project.path.lower()
+            ]
+
+            # 最大25個まで返す（Discordの制限）
+            return [
+                app_commands.Choice(
+                    name=f"{project.id}. {Path(project.path).name}",
+                    value=project.id,
+                )
+                for project in filtered_projects[:MAX_AUTOCOMPLETE_CHOICES]
+            ]
+        except Exception:
+            logger.exception("Error in project_id autocomplete")
+            return []
 
     @agent_group.command(name="stop", description="エージェントセッションを正常終了")
     @is_allowed_user()

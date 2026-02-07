@@ -85,23 +85,6 @@ class TestProjectService:
         for idx, project in enumerate(projects):
             assert project.id == idx + 1
             assert project.path == str(sorted_dirs[idx])
-            assert project.is_active is False
-
-    def test_list_projects_with_active(
-        self,
-        config_with_trusted_paths: Config,
-        temp_project_dirs: list[Path],
-    ) -> None:
-        """アクティブなプロジェクトがある場合のテスト."""
-        service = ProjectService(config_with_trusted_paths)
-        service.switch_project(2)
-
-        projects = service.list_projects()
-
-        assert len(projects) == 3
-        assert projects[0].is_active is False
-        assert projects[1].is_active is True
-        assert projects[2].is_active is False
 
     def test_list_projects_ignores_hidden_dirs(
         self,
@@ -142,70 +125,6 @@ class TestProjectService:
         # 警告ログが出力されるが、空のリストが返る
         assert projects == []
 
-    def test_get_active_project_none(self, config_with_trusted_paths: Config) -> None:
-        """アクティブなプロジェクトがない場合のテスト."""
-        service = ProjectService(config_with_trusted_paths)
-        active = service.get_active_project()
-        assert active is None
-
-    def test_get_active_project_exists(
-        self,
-        config_with_trusted_paths: Config,
-        temp_project_dirs: list[Path],
-    ) -> None:
-        """アクティブなプロジェクトがある場合のテスト."""
-        service = ProjectService(config_with_trusted_paths)
-        service.switch_project(2)
-
-        active = service.get_active_project()
-
-        assert active is not None
-        assert active.id == 2
-        # パス名でソートされるので、2番目は project2
-        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
-        assert active.path == str(sorted_dirs[1])
-        assert active.is_active is True
-
-    def test_get_active_project_invalid_id(
-        self,
-        config_with_trusted_paths: Config,
-    ) -> None:
-        """アクティブIDが設定されているが、リストに存在しない場合のテスト."""
-        service = ProjectService(config_with_trusted_paths)
-        # 強制的に無効なIDを設定
-        service._active_project_id = 999
-
-        active = service.get_active_project()
-
-        # 無効なIDの場合、Noneが返り、内部状態もリセットされる
-        assert active is None
-        assert service._active_project_id is None
-
-    def test_switch_project_success(
-        self,
-        config_with_trusted_paths: Config,
-        temp_project_dirs: list[Path],
-    ) -> None:
-        """プロジェクトの切り替えが成功するテスト."""
-        service = ProjectService(config_with_trusted_paths)
-        project = service.switch_project(2)
-
-        assert project.id == 2
-        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
-        assert project.path == str(sorted_dirs[1])
-        assert project.is_active is True
-        assert service._active_project_id == 2
-
-    def test_switch_project_not_found(self, config_with_trusted_paths: Config) -> None:
-        """存在しないIDを指定した場合のテスト."""
-        service = ProjectService(config_with_trusted_paths)
-
-        with pytest.raises(ProjectNotFoundError) as exc_info:
-            service.switch_project(999)
-
-        assert exc_info.value.project_id == 999
-        assert "Project #999 not found" in str(exc_info.value)
-
     def test_get_project_by_id_success(
         self,
         config_with_trusted_paths: Config,
@@ -218,8 +137,6 @@ class TestProjectService:
         assert project.id == 2
         sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
         assert project.path == str(sorted_dirs[1])
-        # get_project_by_idはアクティブ状態を変更しない
-        assert project.is_active is False
 
     def test_get_project_by_id_not_found(
         self, config_with_trusted_paths: Config
@@ -289,15 +206,9 @@ class TestProject:
 
     def test_create_project(self) -> None:
         """Projectインスタンスの作成テスト."""
-        project = Project(id=1, path="/path/to/project", is_active=False)
+        project = Project(id=1, path="/path/to/project")
         assert project.id == 1
         assert project.path == "/path/to/project"
-        assert project.is_active is False
-
-    def test_project_default_active(self) -> None:
-        """is_activeのデフォルト値のテスト."""
-        project = Project(id=1, path="/path/to/project")
-        assert project.is_active is False
 
 
 class TestProjectNotFoundError:
