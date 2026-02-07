@@ -26,6 +26,7 @@ from acp.schema import (
     DeniedOutcome,
     EnvVariable,
     Implementation,
+    InitializeResponse,  # noqa: TC001
     PermissionOption,
     SessionInfoUpdate,
     ToolCallProgress,
@@ -99,6 +100,7 @@ class ACPClient:
         self._acp_session_id: str | None = None
         self._watchdog_task: asyncio.Task[None] | None = None
         self._last_update_time: float | None = None
+        self._init_response: InitializeResponse | None = None
 
         # Clientプロトコルの実装
         self._client_impl = self._create_client_impl()
@@ -262,6 +264,7 @@ class ACPClient:
             protocol_version=PROTOCOL_VERSION,
             client_info=Implementation(name="discord-acp-bridge", version="0.1.0"),
         )
+        self._init_response = init_response
         logger.info("ACP Server initialized: %s", init_response)
 
         # 新規セッションを作成
@@ -299,6 +302,72 @@ class ACPClient:
         await self._connection.prompt(
             prompt=[text_block(content)], session_id=session_id
         )
+
+    async def set_session_model(self, model_id: str, session_id: str) -> None:
+        """
+        セッションのモデルを変更する.
+
+        Args:
+            model_id: モデル ID（例: "claude-sonnet-4-5"）
+            session_id: セッション ID
+
+        Raises:
+            RuntimeError: 初期化されていない場合
+        """
+        if self._connection is None:
+            msg = "ACP Client is not initialized. Call initialize() first."
+            raise RuntimeError(msg)
+
+        logger.info("Changing model for session %s to: %s", session_id, model_id)
+
+        # set_session_model リクエストを送信
+        await self._connection.set_session_model(
+            model_id=model_id, session_id=session_id
+        )
+
+        logger.info("Model changed successfully for session %s", session_id)
+
+    def get_available_models(self) -> list[str]:
+        """
+        利用可能なモデル一覧を取得する.
+
+        Returns:
+            利用可能なモデルIDのリスト
+
+        Raises:
+            RuntimeError: 初期化されていない場合
+        """
+        if self._init_response is None:
+            msg = "ACP Client is not initialized. Call initialize() first."
+            raise RuntimeError(msg)
+
+        if self._init_response.session_model_state is None:
+            logger.warning("SessionModelState is not available")
+            return []
+
+        models: list[str] = self._init_response.session_model_state.available_models
+        return models
+
+    def get_current_model(self) -> str | None:
+        """
+        現在のモデルIDを取得する.
+
+        Returns:
+            現在のモデルID。取得できない場合はNone
+
+        Raises:
+            RuntimeError: 初期化されていない場合
+        """
+        if self._init_response is None:
+            msg = "ACP Client is not initialized. Call initialize() first."
+            raise RuntimeError(msg)
+
+        if self._init_response.session_model_state is None:
+            logger.warning("SessionModelState is not available")
+            return None
+
+        model_id: str | None = self._init_response.session_model_state.current_model_id
+        return model_id
 
     async def cancel_session(self, session_id: str) -> None:
         """

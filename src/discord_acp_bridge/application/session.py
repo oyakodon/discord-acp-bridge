@@ -74,6 +74,9 @@ class Session(BaseModel):
     acp_session_id: str | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     last_activity_at: datetime = Field(default_factory=datetime.now)
+    # モデル情報
+    available_models: list[str] = Field(default_factory=list)
+    current_model_id: str | None = None
 
     def is_active(self) -> bool:
         """
@@ -228,6 +231,17 @@ class SessionService:
             session.acp_session_id = acp_session_id
             session.state = SessionState.ACTIVE
             session.last_activity_at = datetime.now()
+
+            # モデル情報を取得して保存
+            session.available_models = acp_client.get_available_models()
+            session.current_model_id = acp_client.get_current_model()
+            if not session.available_models:
+                logger.warning("No available models for session %s", session.id)
+            logger.info(
+                "Session model info - available: %s, current: %s",
+                session.available_models,
+                session.current_model_id,
+            )
 
             # セッションを登録
             self._sessions[user_id] = session
@@ -457,6 +471,73 @@ class SessionService:
         logger.debug("Session for thread %d is not active", thread_id)
         return None
 
+    async def set_model(self, session_id: str, model_id: str) -> None:
+        """
+        セッションのモデルを変更する.
+
+        Args:
+            session_id: セッションID
+            model_id: 変更先のモデルID
+
+        Raises:
+            SessionNotFoundError: セッションが存在しない場合
+            SessionStateError: セッションが対話可能状態でない場合
+            ValueError: モデルIDが利用可能なモデル一覧に含まれていない場合
+        """
+        session = self._get_session_by_id(session_id)
+        if session is None:
+            raise SessionNotFoundError(session_id)
+
+        if session.state == SessionState.CLOSED:
+            raise SessionStateError(
+                session_id, session.state, "Cannot change model of closed session"
+            )
+
+        if session.state == SessionState.CREATED:
+            raise SessionStateError(
+                session_id,
+                session.state,
+                "Cannot change model of session that is not yet active",
+            )
+
+        # モデルIDが利用可能なモデル一覧に含まれているかチェック
+        if model_id not in session.available_models:
+            msg = f"Model {model_id} is not available. Available models: {session.available_models}"
+            logger.error(msg)
+            raise ValueError(msg)
+
+        acp_client = self._acp_clients.get(session_id)
+        if acp_client is None:
+            msg = f"ACP client not found for session {session_id}"
+            logger.error(msg)
+            raise SessionNotFoundError(session_id)
+
+        if session.acp_session_id is None:
+            msg = f"ACP session ID is None for session {session_id}"
+            logger.error(msg)
+            raise SessionStateError(
+                session_id, session.state, "ACP session not initialized"
+            )
+
+        logger.info("Changing model for session %s to: %s", session_id, model_id)
+
+        try:
+            # ACP Clientでモデルを変更
+            await acp_client.set_session_model(model_id, session.acp_session_id)
+
+            # セッションのモデル情報は CurrentModeUpdate 通知で更新される
+            session.last_activity_at = datetime.now()
+
+            logger.info(
+                "Model change requested for session %s: %s (waiting for confirmation)",
+                session_id,
+                model_id,
+            )
+
+        except Exception:
+            logger.exception("Error changing model for session %s", session_id)
+            raise
+
     async def close_session(self, session_id: str) -> None:
         """
         セッションを正常終了する.
@@ -682,6 +763,27 @@ class SessionService:
             acp_session_id,
             type(update).__name__,
         )
+
+        # CurrentModeUpdate通知を処理（モデル変更通知）
+        if isinstance(update, CurrentModeUpdate):
+            if update.model_id is not None:
+                logger.info(
+                    "Model changed for session %s: %s",
+                    session.id,
+                    update.model_id,
+                )
+                session.current_model_id = update.model_id
+            # available_modelsフィールドが存在する場合は更新
+            if (
+                hasattr(update, "available_models")
+                and update.available_models is not None
+            ):
+                session.available_models = list(update.available_models)
+                logger.debug(
+                    "Available models updated for session %s: %s",
+                    session.id,
+                    session.available_models,
+                )
 
         # エージェントのメッセージをバッファに追加
         if (

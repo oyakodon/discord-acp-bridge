@@ -24,9 +24,21 @@ def mock_spawn_agent_process() -> Generator[MagicMock, None, None]:
         mock_connection = MagicMock()
         mock_process = MagicMock()
 
+        # SessionModelState のモック
+        mock_session_model_state = MagicMock()
+        mock_session_model_state.available_models = [
+            "claude-sonnet-4-5",
+            "claude-opus-4-6",
+            "claude-haiku-4-5",
+        ]
+        mock_session_model_state.current_model_id = "claude-sonnet-4-5"
+
         # ClientSideConnection のモック
         mock_connection.initialize = AsyncMock(
-            return_value=MagicMock(server_info={"name": "test-server"})
+            return_value=MagicMock(
+                server_info={"name": "test-server"},
+                session_model_state=mock_session_model_state,
+            )
         )
         mock_connection.new_session = AsyncMock(
             return_value=MagicMock(session_id="test-session-123")
@@ -34,6 +46,7 @@ def mock_spawn_agent_process() -> Generator[MagicMock, None, None]:
         mock_connection.prompt = AsyncMock()
         mock_connection.cancel = AsyncMock()
         mock_connection.close = AsyncMock()
+        mock_connection.set_session_model = AsyncMock()
 
         # Process のモック
         mock_process.returncode = None
@@ -165,6 +178,93 @@ async def test_close(
     assert acp_client._process is None
     assert acp_client._acp_session_id is None
     assert acp_client._watchdog_task is None or acp_client._watchdog_task.done()
+
+
+@pytest.mark.asyncio
+async def test_set_session_model(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """モデル変更のテスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # モデルを変更
+    await acp_client.set_session_model("claude-opus-4-6", "test-session-123")
+
+    # set_session_model メソッドが呼ばれたことを確認
+    mock_connection = mock_spawn_agent_process.return_value.__aenter__.return_value[0]
+    mock_connection.set_session_model.assert_called_once_with(
+        model_id="claude-opus-4-6", session_id="test-session-123"
+    )
+
+    # クリーンアップ
+    await acp_client.close()
+
+
+@pytest.mark.asyncio
+async def test_set_session_model_not_initialized() -> None:
+    """初期化前のモデル変更エラーのテスト."""
+    client = ACPClient(command=["claude-code-acp"])
+
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await client.set_session_model("claude-opus-4-6", "test-session-123")
+
+
+@pytest.mark.asyncio
+async def test_get_available_models(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """利用可能なモデル一覧取得のテスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # 利用可能なモデル一覧を取得
+    models = acp_client.get_available_models()
+
+    assert models == [
+        "claude-sonnet-4-5",
+        "claude-opus-4-6",
+        "claude-haiku-4-5",
+    ]
+
+    # クリーンアップ
+    await acp_client.close()
+
+
+def test_get_available_models_not_initialized() -> None:
+    """初期化前のモデル一覧取得エラーのテスト."""
+    client = ACPClient(command=["claude-code-acp"])
+
+    with pytest.raises(RuntimeError, match="not initialized"):
+        client.get_available_models()
+
+
+@pytest.mark.asyncio
+async def test_get_current_model(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """現在のモデル取得のテスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # 現在のモデルを取得
+    current_model = acp_client.get_current_model()
+
+    assert current_model == "claude-sonnet-4-5"
+
+    # クリーンアップ
+    await acp_client.close()
+
+
+def test_get_current_model_not_initialized() -> None:
+    """初期化前の現在のモデル取得エラーのテスト."""
+    client = ACPClient(command=["claude-code-acp"])
+
+    with pytest.raises(RuntimeError, match="not initialized"):
+        client.get_current_model()
 
 
 # Watchdog timeout と session_update のテストは複雑なモックが必要なため省略

@@ -148,12 +148,18 @@ class AgentCommands(commands.Cog):
                 ephemeral=True,
             )
 
-            # スレッドに初期メッセージを送信
-            await thread.send(
-                f"🤖 エージェントセッションを開始しました。\n"
-                f"プロジェクト: `{target_project.path}` (ID: {target_project.id})\n\n"
-                f"このスレッド内でメッセージを送信してください。"
+            # スレッドに初期メッセージを送信（モデル情報を含む）
+            initial_message_lines = [
+                "🤖 エージェントセッションを開始しました。",
+                f"プロジェクト: `{target_project.path}` (ID: {target_project.id})",
+            ]
+            if session.current_model_id:
+                initial_message_lines.append(f"モデル: `{session.current_model_id}`")
+            initial_message_lines.append(
+                "\nこのスレッド内でメッセージを送信してください。"
             )
+
+            await thread.send("\n".join(initial_message_lines))
 
             logger.info(
                 "User %d started session %s (thread: %d, project: #%d)",
@@ -373,6 +379,13 @@ class AgentCommands(commands.Cog):
                 f"最終応答: {session.last_activity_at.strftime('%Y-%m-%d %H:%M:%S')}",
             ]
 
+            # モデル情報を追加
+            if session.current_model_id:
+                status_lines.append(f"現在のモデル: `{session.current_model_id}`")
+            if session.available_models:
+                models_str = ", ".join(f"`{m}`" for m in session.available_models)
+                status_lines.append(f"利用可能なモデル: {models_str}")
+
             message = "\n".join(status_lines)
             await interaction.response.send_message(message, ephemeral=True)
 
@@ -383,6 +396,123 @@ class AgentCommands(commands.Cog):
             await interaction.response.send_message(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )
+
+    @agent_group.command(name="model", description="セッションのモデルを切り替える")
+    @app_commands.describe(model_id="使用するモデルID")
+    @is_allowed_user()
+    async def change_model(
+        self, interaction: discord.Interaction, model_id: str
+    ) -> None:
+        """
+        セッションのモデルを切り替える.
+
+        Args:
+            interaction: Discord Interaction
+            model_id: 変更先のモデルID
+        """
+        logger.info(
+            "User %s (ID: %d) requested to change model to: %s",
+            interaction.user.name,
+            interaction.user.id,
+            model_id,
+        )
+
+        # Deferして応答時間を確保
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # アクティブなセッションを取得
+            session = self.bot.session_service.get_active_session(interaction.user.id)
+            if session is None:
+                await interaction.followup.send(
+                    "アクティブなセッションが存在しません。\n"
+                    "`/agent start` でセッションを開始してください。",
+                    ephemeral=True,
+                )
+                logger.warning(
+                    "User %d has no active session to change model", interaction.user.id
+                )
+                return
+
+            # モデルを変更
+            await self.bot.session_service.set_model(session.id, model_id)
+
+            await interaction.followup.send(
+                f"モデルを `{model_id}` に変更しました。", ephemeral=True
+            )
+
+            # スレッドに通知メッセージを送信
+            if session.thread_id is not None:
+                try:
+                    thread = self.bot.get_channel(session.thread_id)
+                    if isinstance(thread, discord.Thread):
+                        await thread.send(f"🔄 モデルを `{model_id}` に変更しました。")
+                except Exception:
+                    logger.exception(
+                        "Error sending model change notification to thread %d",
+                        session.thread_id,
+                    )
+
+            logger.info(
+                "User %d changed model to %s for session %s",
+                interaction.user.id,
+                model_id,
+                session.id,
+            )
+
+        except SessionNotFoundError:
+            logger.exception("Session not found")
+            await interaction.followup.send(
+                "セッションが見つかりません。既に終了している可能性があります。",
+                ephemeral=True,
+            )
+
+        except ValueError as e:
+            logger.error("Invalid model ID: %s", e)
+            await interaction.followup.send(
+                f"指定されたモデルIDは利用できません。\n"
+                f"`/agent status` で利用可能なモデル一覧を確認してください。\n\n"
+                f"詳細: {e}",
+                ephemeral=True,
+            )
+
+        except Exception:
+            logger.exception("Error changing model")
+            await interaction.followup.send(
+                "エラーが発生しました。ログを確認してください。", ephemeral=True
+            )
+
+    @change_model.autocomplete("model_id")
+    async def model_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """
+        モデルIDのオートコンプリート.
+
+        Args:
+            interaction: Discord Interaction
+            current: 現在入力中のテキスト
+
+        Returns:
+            オートコンプリートの選択肢
+        """
+        # アクティブなセッションを取得
+        session = self.bot.session_service.get_active_session(interaction.user.id)
+        if session is None or not session.available_models:
+            return []
+
+        # 入力に部分一致するモデルをフィルタリング
+        filtered_models = [
+            model
+            for model in session.available_models
+            if current.lower() in model.lower()
+        ]
+
+        # 最大25個まで返す（Discordの制限）
+        return [
+            app_commands.Choice(name=model, value=model)
+            for model in filtered_models[:25]
+        ]
 
 
 async def setup(bot: ACPBot) -> None:

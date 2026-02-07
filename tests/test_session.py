@@ -54,6 +54,15 @@ def mock_acp_client() -> Generator[MagicMock, None, None]:
         instance.send_prompt = AsyncMock()
         instance.cancel_session = AsyncMock()
         instance.close = AsyncMock()
+        instance.set_session_model = AsyncMock()
+        instance.get_available_models = MagicMock(
+            return_value=[
+                "claude-sonnet-4-5",
+                "claude-opus-4-6",
+                "claude-haiku-4-5",
+            ]
+        )
+        instance.get_current_model = MagicMock(return_value="claude-sonnet-4-5")
         mock.return_value = instance
         yield mock
 
@@ -435,3 +444,135 @@ class TestACPConnectionError:
         """エラーメッセージのテスト."""
         error = ACPConnectionError("Connection failed")
         assert "ACP connection failed: Connection failed" in str(error)
+
+
+class TestSessionModelFeatures:
+    """モデル切り替え機能のテスト."""
+
+    @pytest.mark.asyncio
+    async def test_create_session_with_model_info(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """モデル情報付きセッション作成のテスト."""
+        service = SessionService(config)
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        # モデル情報が保存されていることを確認
+        assert session.available_models == [
+            "claude-sonnet-4-5",
+            "claude-opus-4-6",
+            "claude-haiku-4-5",
+        ]
+        assert session.current_model_id == "claude-sonnet-4-5"
+
+        # ACPClientのメソッドが呼ばれたことを確認
+        instance = mock_acp_client.return_value
+        instance.get_available_models.assert_called_once()
+        instance.get_current_model.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_set_model_success(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """モデル切り替え成功のテスト."""
+        service = SessionService(config)
+        session = await service.create_session(user_id=123, project=project)
+
+        # 初期モデルを確認
+        assert session.current_model_id == "claude-sonnet-4-5"
+
+        # モデルを変更
+        await service.set_model(session.id, "claude-opus-4-6")
+
+        # ACPClientのset_session_modelが呼ばれたことを確認
+        instance = mock_acp_client.return_value
+        instance.set_session_model.assert_awaited_once_with(
+            "claude-opus-4-6", "test_acp_session_id"
+        )
+
+        # セッションのモデル情報はCurrentModeUpdate通知で更新されるため、
+        # この時点ではまだ更新されていない
+        assert session.current_model_id == "claude-sonnet-4-5"
+
+    @pytest.mark.asyncio
+    async def test_set_model_invalid_model(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """無効なモデルID指定のテスト."""
+        service = SessionService(config)
+        session = await service.create_session(user_id=123, project=project)
+
+        # 利用不可能なモデルIDを指定
+        with pytest.raises(ValueError, match="not available"):
+            await service.set_model(session.id, "invalid-model-id")
+
+        # ACPClientのset_session_modelが呼ばれていないことを確認
+        instance = mock_acp_client.return_value
+        instance.set_session_model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_model_session_not_found(
+        self,
+        config: Config,
+    ) -> None:
+        """存在しないセッションのモデル変更テスト."""
+        service = SessionService(config)
+
+        with pytest.raises(SessionNotFoundError, match="invalid_session_id"):
+            await service.set_model("invalid_session_id", "claude-opus-4-6")
+
+    @pytest.mark.asyncio
+    async def test_set_model_closed_session(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """クローズ済みセッションのモデル変更テスト."""
+        service = SessionService(config)
+        session = await service.create_session(user_id=123, project=project)
+
+        # セッションをクローズ
+        await service.close_session(session.id)
+
+        # クローズ済みセッションのモデルを変更
+        with pytest.raises(
+            SessionStateError, match="Cannot change model of closed session"
+        ):
+            await service.set_model(session.id, "claude-opus-4-6")
+
+    @pytest.mark.asyncio
+    async def test_set_model_created_session(
+        self,
+        config: Config,
+        project: Project,
+    ) -> None:
+        """CREATED状態のセッションのモデル変更テスト."""
+        service = SessionService(config)
+        # 手動でCREATED状態のセッションを登録
+        session = Session(
+            user_id=123,
+            project=project,
+            state=SessionState.CREATED,
+            available_models=["claude-sonnet-4-5", "claude-opus-4-6"],
+        )
+        service._sessions[123] = session
+        service._session_map[session.id] = session
+
+        # CREATED状態のセッションのモデルを変更
+        with pytest.raises(
+            SessionStateError,
+            match="Cannot change model of session that is not yet active",
+        ):
+            await service.set_model(session.id, "claude-opus-4-6")
