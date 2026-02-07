@@ -76,9 +76,28 @@ class ACPBot(commands.Bot):
         except Exception:
             logger.exception("Error sending message to thread %d", thread_id)
 
+    async def archive_session_thread(self, thread_id: int) -> None:
+        """
+        セッションのスレッドをアーカイブする.
+
+        Args:
+            thread_id: スレッドID
+        """
+        try:
+            thread = self.get_channel(thread_id)
+            if not isinstance(thread, discord.Thread):
+                logger.error("Channel %d is not a thread", thread_id)
+                return
+
+            await thread.edit(archived=True)
+            logger.info("Archived thread %d", thread_id)
+
+        except Exception:
+            logger.exception("Error archiving thread %d", thread_id)
+
     async def send_timeout_notification(self, thread_id: int) -> None:
         """
-        タイムアウト通知をスレッドに送信する.
+        タイムアウト通知をスレッドに送信し、スレッドをアーカイブする.
 
         Args:
             thread_id: スレッドID
@@ -92,13 +111,15 @@ class ACPBot(commands.Bot):
             await thread.send(
                 "⏱️ エージェントが30分間応答しないため、セッションを強制終了しました。"
             )
-
             logger.info("Sent timeout notification to thread %d", thread_id)
 
         except Exception:
             logger.exception(
                 "Error sending timeout notification to thread %d", thread_id
             )
+
+        # スレッドをアーカイブ（メッセージ送信とは分離）
+        await self.archive_session_thread(thread_id)
 
     async def setup_hook(self) -> None:
         """

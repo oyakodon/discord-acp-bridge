@@ -187,11 +187,19 @@ class AgentCommands(commands.Cog):
                 ephemeral=True,
             )
 
-            # スレッドに終了メッセージを送信
+            # スレッドに終了メッセージを送信し、アーカイブ
             if session.thread_id is not None:
-                thread = self.bot.get_channel(session.thread_id)
-                if isinstance(thread, discord.Thread):
-                    await thread.send("🛑 エージェントセッションが終了しました。")
+                try:
+                    thread = self.bot.get_channel(session.thread_id)
+                    if isinstance(thread, discord.Thread):
+                        await thread.send("🛑 エージェントセッションが終了しました。")
+                except Exception:
+                    logger.exception(
+                        "Error sending end message to thread %d", session.thread_id
+                    )
+
+                # スレッドをアーカイブ（メッセージ送信とは分離）
+                await self.bot.archive_session_thread(session.thread_id)
 
             logger.info("User %d stopped session %s", interaction.user.id, session.id)
 
@@ -249,11 +257,21 @@ class AgentCommands(commands.Cog):
                 ephemeral=True,
             )
 
-            # スレッドに終了メッセージを送信
+            # スレッドに終了メッセージを送信し、アーカイブ
             if session.thread_id is not None:
-                thread = self.bot.get_channel(session.thread_id)
-                if isinstance(thread, discord.Thread):
-                    await thread.send("⚠️ エージェントセッションが強制終了されました。")
+                try:
+                    thread = self.bot.get_channel(session.thread_id)
+                    if isinstance(thread, discord.Thread):
+                        await thread.send(
+                            "⚠️ エージェントセッションが強制終了されました。"
+                        )
+                except Exception:
+                    logger.exception(
+                        "Error sending kill message to thread %d", session.thread_id
+                    )
+
+                # スレッドをアーカイブ（メッセージ送信とは分離）
+                await self.bot.archive_session_thread(session.thread_id)
 
             logger.warning("User %d killed session %s", interaction.user.id, session.id)
 
