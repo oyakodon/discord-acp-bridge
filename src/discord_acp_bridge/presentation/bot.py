@@ -57,7 +57,7 @@ class ACPBot(commands.Bot):
         try:
             thread = self.get_channel(thread_id)
             if not isinstance(thread, discord.Thread):
-                logger.error("Channel %d is not a thread", thread_id)
+                logger.error("Channel is not a thread", channel_id=thread_id)
                 return
 
             # メッセージを2000文字以内に分割して送信
@@ -70,10 +70,10 @@ class ACPBot(commands.Bot):
                 for chunk in chunks:
                     await thread.send(chunk)
 
-            logger.debug("Sent message to thread %d", thread_id)
+            logger.debug("Sent message to thread", thread_id=thread_id)
 
         except Exception:
-            logger.exception("Error sending message to thread %d", thread_id)
+            logger.exception("Error sending message to thread", thread_id=thread_id)
 
     async def archive_session_thread(self, thread_id: int) -> None:
         """
@@ -85,14 +85,14 @@ class ACPBot(commands.Bot):
         try:
             thread = self.get_channel(thread_id)
             if not isinstance(thread, discord.Thread):
-                logger.error("Channel %d is not a thread", thread_id)
+                logger.error("Channel is not a thread", channel_id=thread_id)
                 return
 
             await thread.edit(archived=True)
-            logger.info("Archived thread %d", thread_id)
+            logger.info("Archived thread", thread_id=thread_id)
 
         except Exception:
-            logger.exception("Error archiving thread %d", thread_id)
+            logger.exception("Error archiving thread", thread_id=thread_id)
 
     async def send_timeout_notification(self, thread_id: int) -> None:
         """
@@ -104,17 +104,17 @@ class ACPBot(commands.Bot):
         try:
             thread = self.get_channel(thread_id)
             if not isinstance(thread, discord.Thread):
-                logger.error("Channel %d is not a thread", thread_id)
+                logger.error("Channel is not a thread", channel_id=thread_id)
                 return
 
             await thread.send(
                 "⏱️ エージェントが30分間応答しないため、セッションを強制終了しました。"
             )
-            logger.info("Sent timeout notification to thread %d", thread_id)
+            logger.info("Sent timeout notification to thread", thread_id=thread_id)
 
         except Exception:
             logger.exception(
-                "Error sending timeout notification to thread %d", thread_id
+                "Error sending timeout notification to thread", thread_id=thread_id
             )
 
         # スレッドをアーカイブ（メッセージ送信とは分離）
@@ -138,20 +138,22 @@ class ACPBot(commands.Bot):
         try:
             thread = self.get_channel(thread_id)
             if not isinstance(thread, discord.Thread):
-                logger.error("Channel %d is not a thread", thread_id)
+                logger.error("Channel is not a thread", channel_id=thread_id)
                 return
 
             # discord.py v2.xではThreadもtrigger_typing()をサポート
             if not hasattr(thread, "trigger_typing"):
-                logger.warning("trigger_typing not available for thread %d", thread_id)
+                logger.warning(
+                    "trigger_typing not available for thread", thread_id=thread_id
+                )
                 return
 
             await thread.trigger_typing()  # type: ignore[attr-defined]
-            logger.debug("Triggered typing indicator for thread %d", thread_id)
+            logger.debug("Triggered typing indicator for thread", thread_id=thread_id)
 
         except Exception:
             logger.exception(
-                "Error triggering typing indicator for thread %d", thread_id
+                "Error triggering typing indicator for thread", thread_id=thread_id
             )
 
     async def setup_hook(self) -> None:
@@ -189,7 +191,9 @@ class ACPBot(commands.Bot):
             guild = discord.Object(id=self.config.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-            logger.info("Synced command tree to guild %d", self.config.discord_guild_id)
+            logger.info(
+                "Synced command tree to guild", guild_id=self.config.discord_guild_id
+            )
         else:
             await self.tree.sync()
             logger.info("Synced command tree globally")
@@ -200,8 +204,8 @@ class ACPBot(commands.Bot):
             logger.error("Bot user is None")
             return
 
-        logger.info("Bot is ready: %s (ID: %d)", self.user.name, self.user.id)
-        logger.info("Connected to %d guilds", len(self.guilds))
+        logger.info("Bot is ready", bot_name=self.user.name, bot_id=self.user.id)
+        logger.info("Connected to guilds", guild_count=len(self.guilds))
 
 
 def is_allowed_user():
@@ -231,9 +235,9 @@ def is_allowed_user():
 
         if not is_allowed:
             logger.warning(
-                "Unauthorized user attempted to use command: %s (ID: %d)",
-                interaction.user.name,
-                interaction.user.id,
+                "Unauthorized user attempted to use command",
+                user_name=interaction.user.name,
+                user_id=interaction.user.id,
             )
 
         return is_allowed

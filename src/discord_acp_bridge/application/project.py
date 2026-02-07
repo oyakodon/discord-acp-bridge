@@ -82,11 +82,13 @@ class ProjectService:
         for trusted in self._config.trusted_paths:
             trusted_path = Path(trusted).resolve()
             if not trusted_path.exists():
-                logger.warning("Trusted path does not exist: %s", trusted_path)
+                logger.warning("Trusted path does not exist", path=str(trusted_path))
                 continue
 
             if not trusted_path.is_dir():
-                logger.warning("Trusted path is not a directory: %s", trusted_path)
+                logger.warning(
+                    "Trusted path is not a directory", path=str(trusted_path)
+                )
                 continue
 
             # Trusted Path直下のディレクトリを収集
@@ -98,10 +100,13 @@ class ProjectService:
                             discovered_paths.append(str(item.resolve()))
                         else:
                             logger.warning(
-                                "Skipping directory outside trusted paths: %s", item
+                                "Skipping directory outside trusted paths",
+                                path=str(item),
                             )
             except PermissionError:
-                logger.warning("Permission denied when scanning: %s", trusted_path)
+                logger.warning(
+                    "Permission denied when scanning", path=str(trusted_path)
+                )
                 continue
 
         # パス名でソート
@@ -113,7 +118,7 @@ class ProjectService:
             project_id = idx + 1
             projects.append(Project(id=project_id, path=path))
 
-        logger.debug("Listed %d projects from trusted paths", len(projects))
+        logger.debug("Listed projects from trusted paths", project_count=len(projects))
         return projects
 
     def get_project_by_id(self, project_id: int) -> Project:
@@ -138,17 +143,18 @@ class ProjectService:
                 project_path = Path(project.path)
                 if not self._is_path_trusted(project_path):
                     logger.error(
-                        "SECURITY: Attempted to access path outside trusted paths. "
-                        "Path: %s, Trusted Paths: %s, Project ID: %d",
-                        project.path,
-                        self._config.trusted_paths,
-                        project_id,
+                        "SECURITY: Attempted to access path outside trusted paths",
+                        project_path=project.path,
+                        trusted_paths=self._config.trusted_paths,
+                        project_id=project_id,
                     )
                     msg = f"Project path is not within trusted paths: {project.path}"
                     raise ValueError(msg)
 
-                logger.debug("Retrieved project #%d: %s", project_id, project.path)
+                logger.debug(
+                    "Retrieved project", project_id=project_id, path=project.path
+                )
                 return project
 
-        logger.error("Project #%d not found", project_id)
+        logger.error("Project not found", project_id=project_id)
         raise ProjectNotFoundError(project_id)

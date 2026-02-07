@@ -56,10 +56,10 @@ class AgentCommands(commands.Cog):
             project_id: プロジェクトID
         """
         logger.info(
-            "User %s (ID: %d) requested to start agent session (project_id: %d)",
-            interaction.user.name,
-            interaction.user.id,
-            project_id,
+            "User requested to start agent session",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
+            project_id=project_id,
         )
 
         # Deferして応答時間を確保
@@ -78,19 +78,19 @@ class AgentCommands(commands.Cog):
                     ephemeral=True,
                 )
                 logger.warning(
-                    "User %d already has an active session: %s",
-                    interaction.user.id,
-                    existing_session.id,
+                    "User already has an active session",
+                    user_id=interaction.user.id,
+                    session_id=existing_session.id,
                 )
                 return
 
             # プロジェクトを取得
             target_project = self.bot.project_service.get_project_by_id(project_id)
             logger.info(
-                "User %d selected project #%d: %s",
-                interaction.user.id,
-                project_id,
-                target_project.path,
+                "User selected project",
+                user_id=interaction.user.id,
+                project_id=project_id,
+                project_path=target_project.path,
             )
 
             # スレッドを作成
@@ -100,8 +100,8 @@ class AgentCommands(commands.Cog):
                     ephemeral=True,
                 )
                 logger.error(
-                    "User %d tried to start session in non-text channel",
-                    interaction.user.id,
+                    "User tried to start session in non-text channel",
+                    user_id=interaction.user.id,
                 )
                 return
 
@@ -147,15 +147,15 @@ class AgentCommands(commands.Cog):
             await thread.send("\n".join(initial_message_lines))
 
             logger.info(
-                "User %d started session %s (thread: %d, project: #%d)",
-                interaction.user.id,
-                session.id,
-                thread.id,
-                target_project.id,
+                "User started session",
+                user_id=interaction.user.id,
+                session_id=session.id,
+                thread_id=thread.id,
+                project_id=target_project.id,
             )
 
         except ProjectNotFoundError as e:
-            logger.warning("Project #%d not found", e.project_id)
+            logger.warning("Project not found", project_id=e.project_id)
             await interaction.followup.send(
                 f"プロジェクト ID {e.project_id} が見つかりません。\n"
                 f"`/projects` でプロジェクト一覧を確認してください。",
@@ -163,7 +163,7 @@ class AgentCommands(commands.Cog):
             )
 
         except ValueError as e:
-            logger.error("Invalid project path: %s", e)
+            logger.error("Invalid project path", error=str(e))
             await interaction.followup.send(
                 "指定されたプロジェクトは許可されたパス外にあります。\n"
                 "セキュリティ上の理由によりアクセスできません。",
@@ -232,9 +232,9 @@ class AgentCommands(commands.Cog):
             interaction: Discord Interaction
         """
         logger.info(
-            "User %s (ID: %d) requested to stop agent session",
-            interaction.user.name,
-            interaction.user.id,
+            "User requested to stop agent session",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
         )
 
         # Deferして応答時間を確保
@@ -250,7 +250,7 @@ class AgentCommands(commands.Cog):
                     ephemeral=True,
                 )
                 logger.warning(
-                    "User %d has no active session to stop", interaction.user.id
+                    "User has no active session to stop", user_id=interaction.user.id
                 )
                 return
 
@@ -271,13 +271,18 @@ class AgentCommands(commands.Cog):
                         await thread.send("🛑 エージェントセッションが終了しました。")
                 except Exception:
                     logger.exception(
-                        "Error sending end message to thread %d", session.thread_id
+                        "Error sending end message to thread",
+                        thread_id=session.thread_id,
                     )
 
                 # スレッドをアーカイブ（メッセージ送信とは分離）
                 await self.bot.archive_session_thread(session.thread_id)
 
-            logger.info("User %d stopped session %s", interaction.user.id, session.id)
+            logger.info(
+                "User stopped session",
+                user_id=interaction.user.id,
+                session_id=session.id,
+            )
 
         except SessionNotFoundError:
             logger.exception("Session not found")
@@ -302,9 +307,9 @@ class AgentCommands(commands.Cog):
             interaction: Discord Interaction
         """
         logger.info(
-            "User %s (ID: %d) requested to kill agent session",
-            interaction.user.name,
-            interaction.user.id,
+            "User requested to kill agent session",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
         )
 
         # Deferして応答時間を確保
@@ -320,7 +325,7 @@ class AgentCommands(commands.Cog):
                     ephemeral=True,
                 )
                 logger.warning(
-                    "User %d has no active session to kill", interaction.user.id
+                    "User has no active session to kill", user_id=interaction.user.id
                 )
                 return
 
@@ -343,13 +348,18 @@ class AgentCommands(commands.Cog):
                         )
                 except Exception:
                     logger.exception(
-                        "Error sending kill message to thread %d", session.thread_id
+                        "Error sending kill message to thread",
+                        thread_id=session.thread_id,
                     )
 
                 # スレッドをアーカイブ（メッセージ送信とは分離）
                 await self.bot.archive_session_thread(session.thread_id)
 
-            logger.warning("User %d killed session %s", interaction.user.id, session.id)
+            logger.warning(
+                "User killed session",
+                user_id=interaction.user.id,
+                session_id=session.id,
+            )
 
         except SessionNotFoundError:
             logger.exception("Session not found")
@@ -374,9 +384,9 @@ class AgentCommands(commands.Cog):
             interaction: Discord Interaction
         """
         logger.info(
-            "User %s (ID: %d) requested session status",
-            interaction.user.name,
-            interaction.user.id,
+            "User requested session status",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
         )
 
         try:
@@ -411,7 +421,7 @@ class AgentCommands(commands.Cog):
             message = "\n".join(status_lines)
             await interaction.response.send_message(message, ephemeral=True)
 
-            logger.info("Sent session status to user %d", interaction.user.id)
+            logger.info("Sent session status to user", user_id=interaction.user.id)
 
         except Exception:
             logger.exception("Error getting session status")
@@ -433,10 +443,10 @@ class AgentCommands(commands.Cog):
             model_id: 変更先のモデルID
         """
         logger.info(
-            "User %s (ID: %d) requested to change model to: %s",
-            interaction.user.name,
-            interaction.user.id,
-            model_id,
+            "User requested to change model",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
+            model_id=model_id,
         )
 
         # Deferして応答時間を確保
@@ -452,7 +462,8 @@ class AgentCommands(commands.Cog):
                     ephemeral=True,
                 )
                 logger.warning(
-                    "User %d has no active session to change model", interaction.user.id
+                    "User has no active session to change model",
+                    user_id=interaction.user.id,
                 )
                 return
 
@@ -471,15 +482,15 @@ class AgentCommands(commands.Cog):
                         await thread.send(f"🔄 モデルを `{model_id}` に変更しました。")
                 except Exception:
                     logger.exception(
-                        "Error sending model change notification to thread %d",
-                        session.thread_id,
+                        "Error sending model change notification to thread",
+                        thread_id=session.thread_id,
                     )
 
             logger.info(
-                "User %d changed model to %s for session %s",
-                interaction.user.id,
-                model_id,
-                session.id,
+                "User changed model for session",
+                user_id=interaction.user.id,
+                model_id=model_id,
+                session_id=session.id,
             )
 
         except SessionNotFoundError:
@@ -490,7 +501,7 @@ class AgentCommands(commands.Cog):
             )
 
         except ValueError as e:
-            logger.error("Invalid model ID: %s", e)
+            logger.error("Invalid model ID", error=str(e))
             await interaction.followup.send(
                 f"指定されたモデルIDは利用できません。\n"
                 f"`/agent status` で利用可能なモデル一覧を確認してください。\n\n"
@@ -546,9 +557,9 @@ class AgentCommands(commands.Cog):
             interaction: Discord Interaction
         """
         logger.info(
-            "User %s (ID: %d) requested session usage",
-            interaction.user.name,
-            interaction.user.id,
+            "User requested session usage",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
         )
 
         try:
@@ -614,7 +625,7 @@ class AgentCommands(commands.Cog):
             message = "\n".join(usage_lines)
             await interaction.response.send_message(message, ephemeral=True)
 
-            logger.info("Sent session usage to user %d", interaction.user.id)
+            logger.info("Sent session usage to user", user_id=interaction.user.id)
 
         except Exception:
             logger.exception("Error getting session usage")

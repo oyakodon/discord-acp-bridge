@@ -215,10 +215,10 @@ class SessionService:
             ACPConnectionError: ACP Server接続に失敗した場合
         """
         logger.info(
-            "Creating session for user %d, project #%d: %s",
-            user_id,
-            project.id,
-            project.path,
+            "Creating session for user",
+            user_id=user_id,
+            project_id=project.id,
+            project_path=project.path,
         )
 
         # セッションオブジェクトを作成
@@ -242,11 +242,11 @@ class SessionService:
             session.available_models = acp_client.get_available_models()
             session.current_model_id = acp_client.get_current_model()
             if not session.available_models:
-                logger.warning("No available models for session %s", session.id)
+                logger.warning("No available models for session", session_id=session.id)
             logger.info(
-                "Session model info - available: %s, current: %s",
-                session.available_models,
-                session.current_model_id,
+                "Session model info",
+                available_models=session.available_models,
+                current_model=session.current_model_id,
             )
 
             # セッションを登録
@@ -257,7 +257,7 @@ class SessionService:
                 self._thread_sessions[thread_id] = session.id
 
             logger.info(
-                "Session created: %s (ACP session: %s)", session.id, acp_session_id
+                "Session created", session_id=session.id, acp_session_id=acp_session_id
             )
             return session
 
@@ -285,9 +285,9 @@ class SessionService:
         # 既存のタスクをキャンセル（再起動のため）
         if thread_id in self._typing_tasks:
             self._typing_tasks[thread_id].cancel()
-            logger.debug("Restarting typing indicator for thread %d", thread_id)
+            logger.debug("Restarting typing indicator for thread", thread_id=thread_id)
         else:
-            logger.debug("Starting typing indicator for thread %d", thread_id)
+            logger.debug("Starting typing indicator for thread", thread_id=thread_id)
 
         self._typing_active[thread_id] = True
 
@@ -300,7 +300,7 @@ class SessionService:
                 # キャンセルは正常な動作
                 pass
             except Exception:
-                logger.exception("Error in typing loop for thread %d", thread_id)
+                logger.exception("Error in typing loop for thread", thread_id=thread_id)
 
         self._typing_tasks[thread_id] = asyncio.create_task(typing_loop())
 
@@ -314,7 +314,7 @@ class SessionService:
         if thread_id not in self._typing_active:
             return
 
-        logger.debug("Stopping typing indicator for thread %d", thread_id)
+        logger.debug("Stopping typing indicator for thread", thread_id=thread_id)
         self._typing_active[thread_id] = False
 
         # タスクをキャンセル
@@ -333,7 +333,8 @@ class SessionService:
                 await self._on_typing_callback(thread_id, False)
             except Exception:
                 logger.exception(
-                    "Error sending typing stop notification for thread %d", thread_id
+                    "Error sending typing stop notification for thread",
+                    thread_id=thread_id,
                 )
 
     def _schedule_typing_stop(self, thread_id: int, delay: float = 2.0) -> None:
@@ -365,7 +366,7 @@ class SessionService:
                 pass
             except Exception:
                 logger.exception(
-                    "Error in delayed typing stop for thread %d", thread_id
+                    "Error in delayed typing stop for thread", thread_id=thread_id
                 )
 
         self._typing_stop_tasks[thread_id] = asyncio.create_task(delayed_stop())
@@ -406,7 +407,11 @@ class SessionService:
             logger.error(msg)
             raise SessionNotFoundError(session_id)
 
-        logger.info("Sending prompt to session %s: %s", session_id, content[:50])
+        logger.info(
+            "Sending prompt to session",
+            session_id=session_id,
+            content_preview=content[:50],
+        )
 
         # タイピングインジケーターを開始
         if session.thread_id is not None:
@@ -448,10 +453,12 @@ class SessionService:
         """
         session = self._sessions.get(user_id)
         if session is not None and session.is_active():
-            logger.debug("Active session found for user %d: %s", user_id, session.id)
+            logger.debug(
+                "Active session found for user", user_id=user_id, session_id=session.id
+            )
             return session
 
-        logger.debug("No active session for user %d", user_id)
+        logger.debug("No active session for user", user_id=user_id)
         return None
 
     def get_session_by_thread(self, thread_id: int) -> Session | None:
@@ -466,15 +473,17 @@ class SessionService:
         """
         session_id = self._thread_sessions.get(thread_id)
         if session_id is None:
-            logger.debug("No session found for thread %d", thread_id)
+            logger.debug("No session found for thread", thread_id=thread_id)
             return None
 
         session = self._get_session_by_id(session_id)
         if session is not None and session.is_active():
-            logger.debug("Session found for thread %d: %s", thread_id, session.id)
+            logger.debug(
+                "Session found for thread", thread_id=thread_id, session_id=session.id
+            )
             return session
 
-        logger.debug("Session for thread %d is not active", thread_id)
+        logger.debug("Session for thread is not active", thread_id=thread_id)
         return None
 
     async def set_model(self, session_id: str, model_id: str) -> None:
@@ -525,7 +534,9 @@ class SessionService:
                 session_id, session.state, "ACP session not initialized"
             )
 
-        logger.info("Changing model for session %s to: %s", session_id, model_id)
+        logger.info(
+            "Changing model for session", session_id=session_id, model_id=model_id
+        )
 
         try:
             # ACP Clientでモデルを変更
@@ -535,13 +546,13 @@ class SessionService:
             session.last_activity_at = datetime.now()
 
             logger.info(
-                "Model change requested for session %s: %s (waiting for confirmation)",
-                session_id,
-                model_id,
+                "Model change requested for session (waiting for confirmation)",
+                session_id=session_id,
+                model_id=model_id,
             )
 
         except Exception:
-            logger.exception("Error changing model for session %s", session_id)
+            logger.exception("Error changing model for session", session_id=session_id)
             raise
 
     async def close_session(self, session_id: str) -> None:
@@ -558,7 +569,7 @@ class SessionService:
         if session is None:
             raise SessionNotFoundError(session_id)
 
-        logger.info("Closing session: %s", session_id)
+        logger.info("Closing session", session_id=session_id)
 
         # バッファに残っているメッセージを送信
         if session.thread_id is not None:
@@ -591,7 +602,7 @@ class SessionService:
         if session.thread_id is not None and session.thread_id in self._thread_sessions:
             del self._thread_sessions[session.thread_id]
 
-        logger.info("Session closed: %s", session_id)
+        logger.info("Session closed", session_id=session_id)
 
     async def kill_session(self, session_id: str) -> None:
         """
@@ -607,7 +618,7 @@ class SessionService:
         if session is None:
             raise SessionNotFoundError(session_id)
 
-        logger.warning("Force killing session: %s", session_id)
+        logger.warning("Force killing session", session_id=session_id)
 
         # バッファに残っているメッセージを送信
         if session.thread_id is not None:
@@ -638,7 +649,7 @@ class SessionService:
         if session.thread_id is not None and session.thread_id in self._thread_sessions:
             del self._thread_sessions[session.thread_id]
 
-        logger.warning("Session killed: %s", session_id)
+        logger.warning("Session killed", session_id=session_id)
 
     def _get_session_by_id(self, session_id: str) -> Session | None:
         """
@@ -667,7 +678,7 @@ class SessionService:
         try:
             await callback(*args)  # type: ignore[arg-type]
         except Exception:
-            logger.exception("Error in callback: %s", callback.__name__)
+            logger.exception("Error in callback", callback_name=callback.__name__)
 
     async def _flush_message_buffer(self, thread_id: int) -> None:
         """
@@ -697,13 +708,13 @@ class SessionService:
             try:
                 await self._on_message_callback(thread_id, content)
                 logger.debug(
-                    "Flushed message buffer to thread %d (%d chars)",
-                    thread_id,
-                    len(content),
+                    "Flushed message buffer to thread",
+                    thread_id=thread_id,
+                    content_length=len(content),
                 )
             except Exception:
                 logger.exception(
-                    "Error flushing message buffer to thread %d", thread_id
+                    "Error flushing message buffer to thread", thread_id=thread_id
                 )
 
     def _schedule_buffer_flush(self, thread_id: int, delay: float = 0.5) -> None:
@@ -731,7 +742,8 @@ class SessionService:
             except Exception:
                 # その他の例外はログに記録
                 logger.exception(
-                    "Unexpected error in delayed flush task for thread %d", thread_id
+                    "Unexpected error in delayed flush task for thread",
+                    thread_id=thread_id,
                 )
 
         self._flush_tasks[thread_id] = asyncio.create_task(delayed_flush())
@@ -752,7 +764,9 @@ class SessionService:
                 break
 
         if session is None:
-            logger.warning("Session not found for ACP session %s", acp_session_id)
+            logger.warning(
+                "Session not found for ACP session", acp_session_id=acp_session_id
+            )
             return
 
         # 最終アクティビティ時刻を更新
@@ -764,19 +778,19 @@ class SessionService:
             self._schedule_typing_stop(session.thread_id, delay=2.0)
 
         logger.debug(
-            "Session update for %s (ACP: %s): %s",
-            session.id,
-            acp_session_id,
-            type(update).__name__,
+            "Session update",
+            session_id=session.id,
+            acp_session_id=acp_session_id,
+            update_type=type(update).__name__,
         )
 
         # CurrentModeUpdate通知を処理（モデル変更通知）
         if isinstance(update, CurrentModeUpdate):
             if update.model_id is not None:
                 logger.info(
-                    "Model changed for session %s: %s",
-                    session.id,
-                    update.model_id,
+                    "Model changed for session",
+                    session_id=session.id,
+                    model_id=update.model_id,
                 )
                 session.current_model_id = update.model_id
             # available_modelsフィールドが存在する場合は更新
@@ -786,9 +800,9 @@ class SessionService:
             ):
                 session.available_models = list(update.available_models)
                 logger.debug(
-                    "Available models updated for session %s: %s",
-                    session.id,
-                    session.available_models,
+                    "Available models updated for session",
+                    session_id=session.id,
+                    available_models=session.available_models,
                 )
 
         # UsageUpdate通知を処理（使用量更新通知）
@@ -799,12 +813,12 @@ class SessionService:
                 session.total_cost = update.cost.amount
                 session.cost_currency = update.cost.currency
             logger.debug(
-                "Usage updated for session %s: %d/%d tokens, cost: %s %s",
-                session.id,
-                update.used,
-                update.size,
-                update.cost.amount if update.cost else "N/A",
-                update.cost.currency if update.cost else "",
+                "Usage updated for session",
+                session_id=session.id,
+                tokens_used=update.used,
+                tokens_size=update.size,
+                cost_amount=update.cost.amount if update.cost else None,
+                cost_currency=update.cost.currency if update.cost else None,
             )
 
         # エージェントのメッセージをバッファに追加
@@ -823,9 +837,9 @@ class SessionService:
                 self._schedule_buffer_flush(session.thread_id)
 
                 logger.debug(
-                    "Added message chunk to buffer (thread: %d, buffer size: %d)",
-                    session.thread_id,
-                    len(self._message_buffers[session.thread_id]),
+                    "Added message chunk to buffer",
+                    thread_id=session.thread_id,
+                    buffer_size=len(self._message_buffers[session.thread_id]),
                 )
 
     def _on_timeout(self, acp_session_id: str) -> None:
@@ -844,11 +858,12 @@ class SessionService:
 
         if session is None:
             logger.warning(
-                "Session not found for ACP session %s (timeout)", acp_session_id
+                "Session not found for ACP session (timeout)",
+                acp_session_id=acp_session_id,
             )
             return
 
-        logger.error("Session %s timed out", session.id)
+        logger.error("Session timed out", session_id=session.id)
 
         # バッファに残っているメッセージをフラッシュしてからタイムアウト通知を送信
         if session.thread_id is not None:
@@ -870,14 +885,14 @@ class SessionService:
                         await self._on_timeout_callback(thread_id)
                 except Exception:
                     logger.exception(
-                        "Error flushing buffer or sending timeout notification for thread %d",
-                        thread_id,
+                        "Error flushing buffer or sending timeout notification for thread",
+                        thread_id=thread_id,
                     )
 
             asyncio.create_task(flush_and_notify())
             logger.debug(
-                "Scheduled buffer flush and timeout notification for thread %d",
-                thread_id,
+                "Scheduled buffer flush and timeout notification for thread",
+                thread_id=thread_id,
             )
 
         # セッションを強制終了

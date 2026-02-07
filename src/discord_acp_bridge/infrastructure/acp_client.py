@@ -197,18 +197,18 @@ class ACPClient:
                             logger.debug("Parsed usage_update from dict")
                         except Exception as e:
                             logger.warning(
-                                "Failed to parse usage_update (type: %s): %s. Error: %s",
-                                session_update_type,
-                                update,
-                                e,
+                                "Failed to parse usage_update",
+                                session_update_type=session_update_type,
+                                update=update,
+                                error=str(e),
                             )
                             return
                     else:
                         # 未知の通知タイプは無視（将来の拡張に備えてINFOレベル）
                         logger.info(
-                            "Unknown session_update type '%s', ignoring: %s",
-                            session_update_type,
-                            update,
+                            "Unknown session_update type, ignoring",
+                            session_update_type=session_update_type,
+                            update=update,
                         )
                         return
                 else:
@@ -284,14 +284,14 @@ class ACPClient:
                 self, method: str, params: dict[str, Any]
             ) -> dict[str, Any]:
                 """拡張メソッド要求（未実装）."""
-                logger.warning("ext_method '%s' is not implemented", method)
+                logger.warning("ext_method is not implemented", method=method)
                 return {}
 
             async def ext_notification(
                 self, method: str, params: dict[str, Any]
             ) -> None:
                 """拡張通知（未実装）."""
-                logger.warning("ext_notification '%s' is not implemented", method)
+                logger.warning("ext_notification is not implemented", method=method)
 
             def on_connect(self, conn: Agent) -> None:
                 """接続確立時のコールバック."""
@@ -310,9 +310,9 @@ class ACPClient:
             セッション ID
         """
         logger.info(
-            "Initializing ACP Client with command: %s, cwd: %s",
-            self.command,
-            working_directory,
+            "Initializing ACP Client",
+            command=self.command,
+            working_directory=working_directory,
         )
 
         # エージェントプロセスを起動
@@ -328,7 +328,7 @@ class ACPClient:
             client_info=Implementation(name="discord-acp-bridge", version="0.1.0"),
         )
         self._init_response = init_response
-        logger.info("ACP Server initialized: %s", init_response)
+        logger.info("ACP Server initialized", init_response=init_response)
 
         # 新規セッションを作成
         session_response = await self._connection.new_session(
@@ -337,7 +337,7 @@ class ACPClient:
         session_id = session_response.session_id
 
         self._acp_session_id = session_id
-        logger.info("Session created: %s", session_id)
+        logger.info("Session created", session_id=session_id)
 
         # Watchdog Timer を開始
         self._start_watchdog()
@@ -359,7 +359,11 @@ class ACPClient:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        logger.info("Sending prompt to session %s: %s", session_id, content[:50])
+        logger.info(
+            "Sending prompt to session",
+            session_id=session_id,
+            content_preview=content[:50],
+        )
 
         # session/prompt リクエストを送信
         await self._connection.prompt(
@@ -381,14 +385,16 @@ class ACPClient:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        logger.info("Changing model for session %s to: %s", session_id, model_id)
+        logger.info(
+            "Changing model for session", session_id=session_id, model_id=model_id
+        )
 
         # set_session_model リクエストを送信
         await self._connection.set_session_model(
             model_id=model_id, session_id=session_id
         )
 
-        logger.info("Model changed successfully for session %s", session_id)
+        logger.info("Model changed successfully for session", session_id=session_id)
 
     def get_available_models(self) -> list[str]:
         """
@@ -446,7 +452,7 @@ class ACPClient:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        logger.info("Cancelling session: %s", session_id)
+        logger.info("Cancelling session", session_id=session_id)
 
         # Watchdog Timer を停止
         self._stop_watchdog()
@@ -455,7 +461,7 @@ class ACPClient:
         await self._connection.cancel(session_id=session_id)
 
         self._acp_session_id = None
-        logger.info("Session cancelled: %s", session_id)
+        logger.info("Session cancelled", session_id=session_id)
 
     async def close(self) -> None:
         """ACP Client をクローズする."""
@@ -513,8 +519,8 @@ class ACPClient:
                 elapsed = asyncio.get_event_loop().time() - self._last_update_time
                 if elapsed > WATCHDOG_TIMEOUT:
                     logger.error(
-                        "Watchdog timeout: No response for %.1f seconds",
-                        elapsed,
+                        "Watchdog timeout: No response",
+                        elapsed_seconds=round(elapsed, 1),
                     )
                     if self.on_timeout and self._acp_session_id:
                         try:
