@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 # コールバック型定義
 MessageCallback = Callable[[int, str], Awaitable[None]]  # (thread_id, message) -> None
 TimeoutCallback = Callable[[int], Awaitable[None]]  # (thread_id) -> None
+TypingCallback = Callable[
+    [int, bool], Awaitable[None]
+]  # (thread_id, is_typing) -> None
 
 logger = get_logger(__name__)
 
@@ -151,6 +154,7 @@ class SessionService:
         config: Config,
         on_message: MessageCallback | None = None,
         on_timeout: TimeoutCallback | None = None,
+        on_typing: TypingCallback | None = None,
     ) -> None:
         """
         Initialize SessionService.
@@ -159,10 +163,12 @@ class SessionService:
             config: アプリケーション設定
             on_message: ACPからのメッセージ受信時のコールバック
             on_timeout: セッションタイムアウト時のコールバック
+            on_typing: タイピングインジケーター制御時のコールバック
         """
         self._config = config
         self._on_message_callback = on_message
         self._on_timeout_callback = on_timeout
+        self._on_typing_callback = on_typing
         # セッション管理（user_id -> Session）
         self._sessions: dict[int, Session] = {}
         # セッションID逆引きマップ（session_id -> Session）
@@ -175,6 +181,12 @@ class SessionService:
         self._message_buffers: dict[int, list[str]] = {}
         # バッファフラッシュタスク（thread_id -> Task）
         self._flush_tasks: dict[int, asyncio.Task] = {}
+        # タイピングインジケーター管理（thread_id -> Task）
+        self._typing_tasks: dict[int, asyncio.Task] = {}
+        # タイピング停止スケジュールタスク（thread_id -> Task）
+        self._typing_stop_tasks: dict[int, asyncio.Task] = {}
+        # タイピング状態管理（thread_id -> bool）
+        self._typing_active: dict[int, bool] = {}
 
     async def create_session(
         self, user_id: int, project: Project, thread_id: int | None = None
@@ -235,6 +247,109 @@ class SessionService:
             await acp_client.close()
             raise ACPConnectionError(str(e)) from e
 
+    async def _start_typing(self, thread_id: int) -> None:
+        """
+        タイピングインジケーターを開始する.
+
+        5秒毎にタイピング状態を再送するバックグラウンドタスクを起動する。
+
+        Args:
+            thread_id: DiscordスレッドID
+        """
+        if self._on_typing_callback is None:
+            return
+
+        # ローカル変数にキャプチャ（型の絞り込みを保持）
+        callback = self._on_typing_callback
+
+        # 既存のタスクをキャンセル（再起動のため）
+        if thread_id in self._typing_tasks:
+            self._typing_tasks[thread_id].cancel()
+            logger.debug("Restarting typing indicator for thread %d", thread_id)
+        else:
+            logger.debug("Starting typing indicator for thread %d", thread_id)
+
+        self._typing_active[thread_id] = True
+
+        async def typing_loop() -> None:
+            try:
+                while self._typing_active.get(thread_id, False):
+                    await callback(thread_id, True)
+                    await asyncio.sleep(5)  # 5秒毎に再送
+            except asyncio.CancelledError:
+                # キャンセルは正常な動作
+                pass
+            except Exception:
+                logger.exception("Error in typing loop for thread %d", thread_id)
+
+        self._typing_tasks[thread_id] = asyncio.create_task(typing_loop())
+
+    async def _stop_typing(self, thread_id: int) -> None:
+        """
+        タイピングインジケーターを停止する.
+
+        Args:
+            thread_id: DiscordスレッドID
+        """
+        if thread_id not in self._typing_active:
+            return
+
+        logger.debug("Stopping typing indicator for thread %d", thread_id)
+        self._typing_active[thread_id] = False
+
+        # タスクをキャンセル
+        if thread_id in self._typing_tasks:
+            self._typing_tasks[thread_id].cancel()
+            del self._typing_tasks[thread_id]
+
+        # 停止スケジュールタスクもキャンセル
+        if thread_id in self._typing_stop_tasks:
+            self._typing_stop_tasks[thread_id].cancel()
+            del self._typing_stop_tasks[thread_id]
+
+        # 停止通知を送信
+        if self._on_typing_callback is not None:
+            try:
+                await self._on_typing_callback(thread_id, False)
+            except Exception:
+                logger.exception(
+                    "Error sending typing stop notification for thread %d", thread_id
+                )
+
+    def _schedule_typing_stop(self, thread_id: int, delay: float = 2.0) -> None:
+        """
+        タイピングインジケーター停止をスケジュールする.
+
+        既存の停止タスクがあればキャンセルして、新しいタスクをスケジュールする。
+        これにより、update受信中はタイピングが継続し、updateが止まって
+        一定時間経過後に自動的に停止する。
+
+        Args:
+            thread_id: DiscordスレッドID
+            delay: 停止までの遅延時間（秒）
+        """
+        # タイピングが開始されていない場合はスケジュールしない
+        if not self._typing_active.get(thread_id, False):
+            return
+
+        # 既存の停止タスクをキャンセル
+        if thread_id in self._typing_stop_tasks:
+            self._typing_stop_tasks[thread_id].cancel()
+
+        async def delayed_stop() -> None:
+            try:
+                await asyncio.sleep(delay)
+                await self._stop_typing(thread_id)
+            except asyncio.CancelledError:
+                # キャンセルは正常な動作
+                pass
+            except Exception:
+                logger.exception(
+                    "Error in delayed typing stop for thread %d", thread_id
+                )
+
+        self._typing_stop_tasks[thread_id] = asyncio.create_task(delayed_stop())
+
     async def send_prompt(self, session_id: str, content: str) -> None:
         """
         プロンプトを送信する.
@@ -272,6 +387,10 @@ class SessionService:
             raise SessionNotFoundError(session_id)
 
         logger.info("Sending prompt to session %s: %s", session_id, content[:50])
+
+        # タイピングインジケーターを開始
+        if session.thread_id is not None:
+            await self._start_typing(session.thread_id)
 
         # 状態をPromptingに変更
         original_state = session.state
@@ -361,6 +480,8 @@ class SessionService:
                 self._flush_tasks[session.thread_id].cancel()
             # バッファをフラッシュ
             await self._flush_message_buffer(session.thread_id)
+            # タイピングインジケーターを停止
+            await self._stop_typing(session.thread_id)
 
         acp_client = self._acp_clients.get(session_id)
         if acp_client is not None and session.acp_session_id is not None:
@@ -408,6 +529,8 @@ class SessionService:
                 self._flush_tasks[session.thread_id].cancel()
             # バッファをフラッシュ
             await self._flush_message_buffer(session.thread_id)
+            # タイピングインジケーターを停止
+            await self._stop_typing(session.thread_id)
 
         acp_client = self._acp_clients.get(session_id)
         if acp_client is not None:
@@ -548,6 +671,11 @@ class SessionService:
         # 最終アクティビティ時刻を更新
         session.last_activity_at = datetime.now()
 
+        # タイピングインジケーターのタイマーをリセット
+        # update受信中はタイピングを継続し、updateが止まって2秒後に自動停止
+        if session.thread_id is not None:
+            self._schedule_typing_stop(session.thread_id, delay=2.0)
+
         logger.debug(
             "Session update for %s (ACP: %s): %s",
             session.id,
@@ -611,6 +739,8 @@ class SessionService:
                 try:
                     # バッファをフラッシュ
                     await self._flush_message_buffer(thread_id)
+                    # タイピングインジケーターを停止
+                    await self._stop_typing(thread_id)
                     # フラッシュ後にタイムアウト通知を送信
                     if self._on_timeout_callback:
                         await self._on_timeout_callback(thread_id)

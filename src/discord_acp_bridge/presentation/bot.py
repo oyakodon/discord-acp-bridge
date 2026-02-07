@@ -120,6 +120,40 @@ class ACPBot(commands.Bot):
         # スレッドをアーカイブ（メッセージ送信とは分離）
         await self.archive_session_thread(thread_id)
 
+    async def set_typing_indicator(self, thread_id: int, is_typing: bool) -> None:
+        """
+        タイピングインジケーターを制御する.
+
+        Discord APIの制限により、タイピングインジケーターは10秒間のみ表示される。
+        継続的に表示するには、5-10秒毎に再送する必要がある。
+
+        Args:
+            thread_id: スレッドID
+            is_typing: タイピング中かどうか（Falseの場合は何もしない）
+        """
+        if not is_typing:
+            # タイピング停止は_stop_typing()で明示的に管理される
+            return
+
+        try:
+            thread = self.get_channel(thread_id)
+            if not isinstance(thread, discord.Thread):
+                logger.error("Channel %d is not a thread", thread_id)
+                return
+
+            # discord.py v2.xではThreadもtrigger_typing()をサポート
+            if not hasattr(thread, "trigger_typing"):
+                logger.warning("trigger_typing not available for thread %d", thread_id)
+                return
+
+            await thread.trigger_typing()  # type: ignore[attr-defined]
+            logger.debug("Triggered typing indicator for thread %d", thread_id)
+
+        except Exception:
+            logger.exception(
+                "Error triggering typing indicator for thread %d", thread_id
+            )
+
     async def setup_hook(self) -> None:
         """
         Bot起動時の初期化処理.

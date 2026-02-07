@@ -74,16 +74,11 @@ class MessageEventHandler(commands.Cog):
         )
 
         try:
-            # タイピングインジケーターを開始
-            async with message.channel.typing():
-                # プロンプトをセッションに送信
-                await self.bot.session_service.send_prompt(session.id, message.content)
+            # プロンプトをセッションに送信
+            # タイピングインジケーターはSessionServiceが管理する
+            await self.bot.session_service.send_prompt(session.id, message.content)
 
             logger.info("Sent prompt to session %s", session.id)
-
-            # TODO: ACPからの応答を受け取り、Discordに送信する処理を実装
-            # MVP段階では、プロンプト送信のみ実装
-            # 応答は session_service の _on_session_update コールバックで処理される予定
 
         except SessionStateError as e:
             logger.exception("Session state error")
