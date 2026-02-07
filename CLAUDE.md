@@ -68,7 +68,7 @@ discord-acp-bridge/
 │       │   ├── bot.py              # Discord Bot Client
 │       │   ├── commands/           # Slash Commands (Cog)
 │       │   │   ├── __init__.py
-│       │   │   ├── project.py      # /project list, /project switch, /project add
+│       │   │   ├── project.py      # /project list, /project switch
 │       │   │   └── agent.py        # /agent start, /agent stop, /agent kill, /agent status
 │       │   └── events/             # Event Handlers
 │       │       ├── __init__.py
@@ -100,7 +100,7 @@ discord-acp-bridge/
 | Slash Commands | コマンド受付、入力検証、応答整形 | Session Service, Project Service |
 | Event Handlers | メッセージイベント処理 | Session Service |
 | Session Service | セッションライフサイクル管理、プロンプト送受信 | ACP Client |
-| Project Service | プロジェクト登録・取得・切り替え | Config |
+| Project Service | プロジェクト自動スキャン・取得・切り替え | Config |
 | ACP Client | ACPプロトコル通信、プロセス管理 | Config |
 | Config | 設定値の読み込み・提供 | 環境変数, .env |
 
@@ -124,13 +124,18 @@ discord-acp-bridge/
 
 | コマンド | 説明 | 引数 |
 |---------|------|------|
-| `/project list` | 登録済みプロジェクト一覧を表示 | なし |
+| `/project list` | Trusted Path配下のプロジェクト一覧を表示 | なし |
 | `/project switch` | 操作対象プロジェクトを切り替え | `id` (integer): プロジェクトID |
-| `/project add` | 新規プロジェクトを登録 | `path` (string): ディレクトリパス |
 | `/agent start` | エージェントセッションを開始 | なし |
 | `/agent stop` | エージェントセッションを正常終了 | なし |
 | `/agent kill` | エージェントセッションを強制終了 | なし |
 | `/agent status` | 現在のセッション状態を表示 | なし |
+
+### プロジェクト管理
+- プロジェクトは `TRUSTED_PATHS` 環境変数で指定されたディレクトリ配下のディレクトリを自動スキャンして検出される
+- 隠しディレクトリ（`.` で始まるディレクトリ）は自動的に除外される
+- プロジェクトIDは自動スキャン結果のパス名順に割り当てられる（1から連番）
+- Trusted Path配下にないパスへのアクセスは拒否される
 
 ### セッション管理
 - セッションはプロジェクトに紐づく
@@ -230,18 +235,9 @@ pytest path/to/test   # 特定のテストを実行
 | `DISCORD_GUILD_ID` | integer | Yes | - | 開発用ギルドID（指定時はそのギルドのみにコマンド同期） |
 | `DISCORD_ALLOWED_USER_ID` | integer | Yes | - | 利用を許可するDiscordユーザーID |
 | `AGENT_COMMAND` | list[string] | No | ["claude-code-acp"] | ACP Server起動コマンド |
+| `TRUSTED_PATHS` | list[string] | Yes | [] | プロジェクトとして許可するディレクトリのルートパスのリスト（JSON配列形式） |
 
-### プロジェクト設定形式
-
-```json
-[
-  "/home/user/projects/api",
-  "/home/user/projects/web",
-  "/home/user/projects/cli"
-]
-```
-
-配列のインデックス順にID 1, 2, 3... が割り当てられる。
+**注意**: `AGENT_COMMAND` と `TRUSTED_PATHS` は JSON 配列形式で指定します（例: `["path1", "path2"]`）。
 
 ## ACP通信
 

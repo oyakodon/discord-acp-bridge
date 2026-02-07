@@ -54,8 +54,9 @@ class ProjectCommands(commands.Cog):
 
             if not projects:
                 await interaction.response.send_message(
-                    "登録されているプロジェクトがありません。\n"
-                    "`/project add <path>` でプロジェクトを追加してください。",
+                    "Trusted Path配下にプロジェクトが見つかりません。\n"
+                    "環境変数 `TRUSTED_PATHS` で指定されたディレクトリ配下に"
+                    "プロジェクトディレクトリを作成してください。",
                     ephemeral=True,
                 )
                 return
@@ -122,53 +123,6 @@ class ProjectCommands(commands.Cog):
 
         except Exception:
             logger.exception("Error switching project")
-            await interaction.response.send_message(
-                "エラーが発生しました。ログを確認してください。", ephemeral=True
-            )
-
-    @project_group.command(name="add", description="新規プロジェクトを登録")
-    @app_commands.describe(path="プロジェクトのディレクトリパス（絶対パス）")
-    @is_allowed_user()
-    async def add_project(self, interaction: discord.Interaction, path: str) -> None:
-        """
-        新規プロジェクトを登録する.
-
-        Args:
-            interaction: Discord Interaction
-            path: プロジェクトのディレクトリパス
-        """
-        logger.info(
-            "User %s (ID: %d) requested to add project: %s",
-            interaction.user.name,
-            interaction.user.id,
-            path,
-        )
-
-        try:
-            project = self.bot.project_service.add_project(path)
-            await interaction.response.send_message(
-                f"プロジェクト #{project.id} を登録しました:\n`{project.path}`\n\n"
-                f"`/project switch {project.id}` で切り替えることができます。",
-                ephemeral=True,
-            )
-
-            logger.info(
-                "User %d added project #%d: %s", interaction.user.id, project.id, path
-            )
-
-        except ValueError as e:
-            logger.warning(
-                "User %d tried to add invalid path: %s (Error: %s)",
-                interaction.user.id,
-                path,
-                e,
-            )
-            await interaction.response.send_message(
-                f"無効なパスです: {e}\n絶対パスを指定してください。", ephemeral=True
-            )
-
-        except Exception:
-            logger.exception("Error adding project")
             await interaction.response.send_message(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )

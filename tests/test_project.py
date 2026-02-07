@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -16,18 +15,20 @@ from discord_acp_bridge.infrastructure.config import Config
 
 
 @pytest.fixture
-def temp_projects_file(tmp_path: Path) -> Path:
-    """一時的なプロジェクト設定ファイルを作成する."""
-    return tmp_path / "projects.json"
+def temp_trusted_root(tmp_path: Path) -> Path:
+    """Trusted Pathのルートディレクトリを作成する."""
+    trusted_root = tmp_path / "trusted"
+    trusted_root.mkdir()
+    return trusted_root
 
 
 @pytest.fixture
-def temp_project_dirs(tmp_path: Path) -> list[Path]:
-    """テスト用のプロジェクトディレクトリを作成する."""
+def temp_project_dirs(temp_trusted_root: Path) -> list[Path]:
+    """テスト用のプロジェクトディレクトリをTrusted Path配下に作成する."""
     dirs = [
-        tmp_path / "project1",
-        tmp_path / "project2",
-        tmp_path / "project3",
+        temp_trusted_root / "project1",
+        temp_trusted_root / "project2",
+        temp_trusted_root / "project3",
     ]
     for d in dirs:
         d.mkdir()
@@ -35,33 +36,27 @@ def temp_project_dirs(tmp_path: Path) -> list[Path]:
 
 
 @pytest.fixture
-def config_with_projects(
-    temp_projects_file: Path,
-    temp_project_dirs: list[Path],
+def config_with_trusted_paths(
+    temp_trusted_root: Path,
 ) -> Config:
-    """プロジェクトが登録された設定を作成する."""
-    # プロジェクト設定ファイルを作成
-    projects = [str(d) for d in temp_project_dirs]
-    temp_projects_file.write_text(json.dumps(projects, indent=2), encoding="utf-8")
-
-    # Configインスタンスを作成（環境変数はモック）
+    """Trusted Pathsが設定された設定を作成する."""
     config = Config(
         discord_bot_token="test_token",
         discord_guild_id=123456789,
         discord_allowed_user_id=987654321,
-        projects_file=temp_projects_file,
+        trusted_paths=[str(temp_trusted_root)],
     )
     return config
 
 
 @pytest.fixture
-def config_empty(temp_projects_file: Path) -> Config:
-    """プロジェクトが登録されていない設定を作成する."""
+def config_empty(tmp_path: Path) -> Config:
+    """Trusted Pathsが空の設定を作成する."""
     config = Config(
         discord_bot_token="test_token",
         discord_guild_id=123456789,
         discord_allowed_user_id=987654321,
-        projects_file=temp_projects_file,
+        trusted_paths=[],
     )
     return config
 
@@ -70,33 +65,35 @@ class TestProjectService:
     """ProjectServiceのテスト."""
 
     def test_list_projects_empty(self, config_empty: Config) -> None:
-        """プロジェクトが空の場合のテスト."""
+        """Trusted Pathsが空の場合のテスト."""
         service = ProjectService(config_empty)
         projects = service.list_projects()
         assert projects == []
 
     def test_list_projects_with_data(
         self,
-        config_with_projects: Config,
+        config_with_trusted_paths: Config,
         temp_project_dirs: list[Path],
     ) -> None:
         """プロジェクトが複数ある場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         projects = service.list_projects()
 
         assert len(projects) == 3
+        # パス名でソートされる
+        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
         for idx, project in enumerate(projects):
             assert project.id == idx + 1
-            assert project.path == str(temp_project_dirs[idx])
+            assert project.path == str(sorted_dirs[idx])
             assert project.is_active is False
 
     def test_list_projects_with_active(
         self,
-        config_with_projects: Config,
+        config_with_trusted_paths: Config,
         temp_project_dirs: list[Path],
     ) -> None:
         """アクティブなプロジェクトがある場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         service.switch_project(2)
 
         projects = service.list_projects()
@@ -106,34 +103,75 @@ class TestProjectService:
         assert projects[1].is_active is True
         assert projects[2].is_active is False
 
-    def test_get_active_project_none(self, config_with_projects: Config) -> None:
+    def test_list_projects_ignores_hidden_dirs(
+        self,
+        temp_trusted_root: Path,
+    ) -> None:
+        """隠しディレクトリを無視することを確認する."""
+        # 通常のディレクトリと隠しディレクトリを作成
+        (temp_trusted_root / "visible_project").mkdir()
+        (temp_trusted_root / ".hidden_project").mkdir()
+
+        config = Config(
+            discord_bot_token="test_token",
+            discord_guild_id=123456789,
+            discord_allowed_user_id=987654321,
+            trusted_paths=[str(temp_trusted_root)],
+        )
+        service = ProjectService(config)
+        projects = service.list_projects()
+
+        # 隠しディレクトリは含まれない
+        assert len(projects) == 1
+        assert projects[0].path == str(temp_trusted_root / "visible_project")
+
+    def test_list_projects_nonexistent_trusted_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """存在しないTrusted Pathを指定した場合のテスト."""
+        config = Config(
+            discord_bot_token="test_token",
+            discord_guild_id=123456789,
+            discord_allowed_user_id=987654321,
+            trusted_paths=[str(tmp_path / "nonexistent")],
+        )
+        service = ProjectService(config)
+        projects = service.list_projects()
+
+        # 警告ログが出力されるが、空のリストが返る
+        assert projects == []
+
+    def test_get_active_project_none(self, config_with_trusted_paths: Config) -> None:
         """アクティブなプロジェクトがない場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         active = service.get_active_project()
         assert active is None
 
     def test_get_active_project_exists(
         self,
-        config_with_projects: Config,
+        config_with_trusted_paths: Config,
         temp_project_dirs: list[Path],
     ) -> None:
         """アクティブなプロジェクトがある場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         service.switch_project(2)
 
         active = service.get_active_project()
 
         assert active is not None
         assert active.id == 2
-        assert active.path == str(temp_project_dirs[1])
+        # パス名でソートされるので、2番目は project2
+        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
+        assert active.path == str(sorted_dirs[1])
         assert active.is_active is True
 
     def test_get_active_project_invalid_id(
         self,
-        config_with_projects: Config,
+        config_with_trusted_paths: Config,
     ) -> None:
         """アクティブIDが設定されているが、リストに存在しない場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         # 強制的に無効なIDを設定
         service._active_project_id = 999
 
@@ -145,21 +183,22 @@ class TestProjectService:
 
     def test_switch_project_success(
         self,
-        config_with_projects: Config,
+        config_with_trusted_paths: Config,
         temp_project_dirs: list[Path],
     ) -> None:
         """プロジェクトの切り替えが成功するテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
         project = service.switch_project(2)
 
         assert project.id == 2
-        assert project.path == str(temp_project_dirs[1])
+        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
+        assert project.path == str(sorted_dirs[1])
         assert project.is_active is True
         assert service._active_project_id == 2
 
-    def test_switch_project_not_found(self, config_with_projects: Config) -> None:
+    def test_switch_project_not_found(self, config_with_trusted_paths: Config) -> None:
         """存在しないIDを指定した場合のテスト."""
-        service = ProjectService(config_with_projects)
+        service = ProjectService(config_with_trusted_paths)
 
         with pytest.raises(ProjectNotFoundError) as exc_info:
             service.switch_project(999)
@@ -167,111 +206,55 @@ class TestProjectService:
         assert exc_info.value.project_id == 999
         assert "Project #999 not found" in str(exc_info.value)
 
-    def test_add_project_success(
+    def test_is_path_trusted_valid(
         self,
-        config_empty: Config,
+        config_with_trusted_paths: Config,
+        temp_trusted_root: Path,
+    ) -> None:
+        """Trusted Path配下のパスが正しく検証されることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        # Trusted Path配下のパス
+        valid_path = temp_trusted_root / "some_project"
+        assert service._is_path_trusted(valid_path) is True
+
+    def test_is_path_trusted_invalid(
+        self,
+        config_with_trusted_paths: Config,
         tmp_path: Path,
     ) -> None:
-        """プロジェクトの追加が成功するテスト."""
-        service = ProjectService(config_empty)
-        new_dir = tmp_path / "new_project"
-        new_dir.mkdir()
+        """Trusted Path配下にないパスが正しく検証されることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
 
-        project = service.add_project(str(new_dir))
+        # Trusted Path外のパス
+        invalid_path = tmp_path / "untrusted" / "project"
+        assert service._is_path_trusted(invalid_path) is False
 
-        assert project.id == 1
-        assert project.path == str(new_dir.resolve())
-        assert project.is_active is False
-
-        # 設定ファイルに保存されていることを確認
-        projects = config_empty.load_projects()
-        assert len(projects) == 1
-        assert projects[0] == str(new_dir.resolve())
-
-    def test_add_project_multiple(
+    def test_is_path_trusted_multiple_trusted_paths(
         self,
-        config_empty: Config,
         tmp_path: Path,
     ) -> None:
-        """複数のプロジェクトを追加するテスト."""
-        service = ProjectService(config_empty)
+        """複数のTrusted Pathsが設定されている場合のテスト."""
+        trusted1 = tmp_path / "trusted1"
+        trusted2 = tmp_path / "trusted2"
+        trusted1.mkdir()
+        trusted2.mkdir()
 
-        # 1つ目を追加
-        dir1 = tmp_path / "project1"
-        dir1.mkdir()
-        project1 = service.add_project(str(dir1))
-        assert project1.id == 1
+        config = Config(
+            discord_bot_token="test_token",
+            discord_guild_id=123456789,
+            discord_allowed_user_id=987654321,
+            trusted_paths=[str(trusted1), str(trusted2)],
+        )
+        service = ProjectService(config)
 
-        # 2つ目を追加
-        dir2 = tmp_path / "project2"
-        dir2.mkdir()
-        project2 = service.add_project(str(dir2))
-        assert project2.id == 2
+        # 両方のTrusted Path配下のパスが有効
+        assert service._is_path_trusted(trusted1 / "project1") is True
+        assert service._is_path_trusted(trusted2 / "project2") is True
 
-        # 設定ファイルを確認
-        projects = config_empty.load_projects()
-        assert len(projects) == 2
-
-    def test_add_project_not_exists(self, config_empty: Config) -> None:
-        """存在しないパスを指定した場合のテスト."""
-        service = ProjectService(config_empty)
-
-        with pytest.raises(ValueError, match=r"does not exist"):
-            service.add_project("/path/that/does/not/exist")
-
-    def test_add_project_not_directory(
-        self,
-        config_empty: Config,
-        tmp_path: Path,
-    ) -> None:
-        """ディレクトリでないパスを指定した場合のテスト."""
-        service = ProjectService(config_empty)
-        file_path = tmp_path / "file.txt"
-        file_path.write_text("test")
-
-        with pytest.raises(ValueError, match=r"not a directory"):
-            service.add_project(str(file_path))
-
-    def test_add_project_duplicate(
-        self,
-        config_with_projects: Config,
-        temp_project_dirs: list[Path],
-    ) -> None:
-        """既に登録済みのパスを指定した場合のテスト."""
-        service = ProjectService(config_with_projects)
-
-        # 既存のプロジェクトを再度追加
-        project = service.add_project(str(temp_project_dirs[0]))
-
-        # 既存のプロジェクト情報が返される
-        assert project.id == 1
-        assert project.path == str(temp_project_dirs[0])
-
-        # プロジェクト数は変わらない
-        projects = config_with_projects.load_projects()
-        assert len(projects) == 3
-
-    def test_add_project_with_active(
-        self,
-        config_with_projects: Config,
-        tmp_path: Path,
-    ) -> None:
-        """アクティブなプロジェクトがある状態での追加テスト."""
-        service = ProjectService(config_with_projects)
-        service.switch_project(2)
-
-        # 新しいプロジェクトを追加
-        new_dir = tmp_path / "new_project"
-        new_dir.mkdir()
-        project = service.add_project(str(new_dir))
-
-        # 新しいプロジェクトはアクティブでない
-        assert project.is_active is False
-
-        # 既存のアクティブなプロジェクトは変わらない
-        active = service.get_active_project()
-        assert active is not None
-        assert active.id == 2
+        # それ以外は無効
+        untrusted = tmp_path / "untrusted"
+        assert service._is_path_trusted(untrusted / "project") is False
 
 
 class TestProject:
