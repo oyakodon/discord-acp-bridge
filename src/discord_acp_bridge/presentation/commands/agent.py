@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from discord_acp_bridge.application.project import ProjectNotFoundError
 from discord_acp_bridge.application.session import (
     ACPConnectionError,
     SessionNotFoundError,
@@ -16,6 +18,7 @@ from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
 if TYPE_CHECKING:
+    from discord_acp_bridge.application.project import Project
     from discord_acp_bridge.presentation.bot import ACPBot
 
 logger = get_logger(__name__)
@@ -38,18 +41,25 @@ class AgentCommands(commands.Cog):
     )
 
     @agent_group.command(name="start", description="エージェントセッションを開始")
+    @app_commands.describe(
+        project_id="プロジェクトID（省略時はアクティブプロジェクト）"
+    )
     @is_allowed_user()
-    async def start_session(self, interaction: discord.Interaction) -> None:
+    async def start_session(
+        self, interaction: discord.Interaction, project_id: int | None = None
+    ) -> None:
         """
         エージェントセッションを開始する.
 
         Args:
             interaction: Discord Interaction
+            project_id: プロジェクトID（省略時はアクティブプロジェクト）
         """
         logger.info(
-            "User %s (ID: %d) requested to start agent session",
+            "User %s (ID: %d) requested to start agent session (project_id: %s)",
             interaction.user.name,
             interaction.user.id,
+            project_id,
         )
 
         # Deferして応答時間を確保
@@ -74,16 +84,29 @@ class AgentCommands(commands.Cog):
                 )
                 return
 
-            # アクティブなプロジェクトを取得
-            active_project = self.bot.project_service.get_active_project()
-            if active_project is None:
-                await interaction.followup.send(
-                    "アクティブなプロジェクトが設定されていません。\n"
-                    "`/project switch <id>` でプロジェクトを選択してください。",
-                    ephemeral=True,
+            # プロジェクトを取得
+            target_project: Project | None
+            if project_id is not None:
+                # project_idが指定された場合、そのプロジェクトを取得
+                target_project = self.bot.project_service.get_project_by_id(project_id)
+                logger.info(
+                    "User %d selected project #%d: %s",
+                    interaction.user.id,
+                    project_id,
+                    target_project.path,
                 )
-                logger.warning("User %d has no active project", interaction.user.id)
-                return
+            else:
+                # project_idが省略された場合、アクティブプロジェクトを取得
+                target_project = self.bot.project_service.get_active_project()
+                if target_project is None:
+                    await interaction.followup.send(
+                        "アクティブなプロジェクトが設定されていません。\n"
+                        "`/project switch <id>` でプロジェクトを選択するか、\n"
+                        "`/agent start project_id:<id>` でプロジェクトを指定してください。",
+                        ephemeral=True,
+                    )
+                    logger.warning("User %d has no active project", interaction.user.id)
+                    return
 
             # スレッドを作成
             if not isinstance(interaction.channel, discord.TextChannel):
@@ -97,21 +120,29 @@ class AgentCommands(commands.Cog):
                 )
                 return
 
+            # スレッド名を生成（100文字制限に対応）
+            project_name = Path(target_project.path).name
+            thread_name = f"Agent - {project_name}"
+            if len(thread_name) > 100:
+                # 100文字を超える場合は切り詰める
+                max_project_len = 100 - len("Agent - ") - 3  # "..." の分を引く
+                thread_name = f"Agent - {project_name[:max_project_len]}..."
+
             thread = await interaction.channel.create_thread(
-                name=f"Agent - {active_project.path}",
+                name=thread_name,
                 auto_archive_duration=60,  # 1時間後に自動アーカイブ
             )
 
             # セッションを作成
             session = await self.bot.session_service.create_session(
                 user_id=interaction.user.id,
-                project=active_project,
+                project=target_project,
                 thread_id=thread.id,
             )
 
             await interaction.followup.send(
                 f"エージェントセッションを開始しました。\n"
-                f"プロジェクト: `{active_project.path}`\n"
+                f"プロジェクト: `{target_project.path}` (ID: {target_project.id})\n"
                 f"スレッド: <#{thread.id}>\n\n"
                 f"スレッド内でメッセージを送信することで、エージェントと対話できます。",
                 ephemeral=True,
@@ -120,15 +151,32 @@ class AgentCommands(commands.Cog):
             # スレッドに初期メッセージを送信
             await thread.send(
                 f"🤖 エージェントセッションを開始しました。\n"
-                f"プロジェクト: `{active_project.path}`\n\n"
+                f"プロジェクト: `{target_project.path}` (ID: {target_project.id})\n\n"
                 f"このスレッド内でメッセージを送信してください。"
             )
 
             logger.info(
-                "User %d started session %s (thread: %d)",
+                "User %d started session %s (thread: %d, project: #%d)",
                 interaction.user.id,
                 session.id,
                 thread.id,
+                target_project.id,
+            )
+
+        except ProjectNotFoundError as e:
+            logger.warning("Project #%d not found", e.project_id)
+            await interaction.followup.send(
+                f"プロジェクト ID {e.project_id} が見つかりません。\n"
+                f"`/project list` でプロジェクト一覧を確認してください。",
+                ephemeral=True,
+            )
+
+        except ValueError as e:
+            logger.error("Invalid project path: %s", e)
+            await interaction.followup.send(
+                "指定されたプロジェクトは許可されたパス外にあります。\n"
+                "セキュリティ上の理由によりアクセスできません。",
+                ephemeral=True,
             )
 
         except ACPConnectionError as e:

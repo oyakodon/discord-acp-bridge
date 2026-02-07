@@ -206,6 +206,33 @@ class TestProjectService:
         assert exc_info.value.project_id == 999
         assert "Project #999 not found" in str(exc_info.value)
 
+    def test_get_project_by_id_success(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """プロジェクトIDでプロジェクトを取得できることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = service.get_project_by_id(2)
+
+        assert project.id == 2
+        sorted_dirs = sorted(temp_project_dirs, key=lambda p: str(p))
+        assert project.path == str(sorted_dirs[1])
+        # get_project_by_idはアクティブ状態を変更しない
+        assert project.is_active is False
+
+    def test_get_project_by_id_not_found(
+        self, config_with_trusted_paths: Config
+    ) -> None:
+        """存在しないIDを指定した場合のテスト."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectNotFoundError) as exc_info:
+            service.get_project_by_id(999)
+
+        assert exc_info.value.project_id == 999
+        assert "Project #999 not found" in str(exc_info.value)
+
     def test_is_path_trusted_valid(
         self,
         config_with_trusted_paths: Config,

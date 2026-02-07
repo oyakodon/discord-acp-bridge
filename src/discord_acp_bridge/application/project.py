@@ -144,15 +144,15 @@ class ProjectService:
         self._active_project_id = None
         return None
 
-    def switch_project(self, project_id: int) -> Project:
+    def get_project_by_id(self, project_id: int) -> Project:
         """
-        指定されたプロジェクトをアクティブに切り替える.
+        指定されたIDのプロジェクトを取得する.
 
         Args:
             project_id: プロジェクトID
 
         Returns:
-            切り替え後のプロジェクト
+            該当するプロジェクト
 
         Raises:
             ProjectNotFoundError: 指定されたIDのプロジェクトが存在しない場合
@@ -175,9 +175,29 @@ class ProjectService:
                     msg = f"Project path is not within trusted paths: {project.path}"
                     raise ValueError(msg)
 
-                self._active_project_id = project_id
-                logger.info("Switched to project #%d: %s", project_id, project.path)
-                return Project(id=project.id, path=project.path, is_active=True)
+                logger.debug("Retrieved project #%d: %s", project_id, project.path)
+                return project
 
         logger.error("Project #%d not found", project_id)
         raise ProjectNotFoundError(project_id)
+
+    def switch_project(self, project_id: int) -> Project:
+        """
+        指定されたプロジェクトをアクティブに切り替える.
+
+        Args:
+            project_id: プロジェクトID
+
+        Returns:
+            切り替え後のプロジェクト
+
+        Raises:
+            ProjectNotFoundError: 指定されたIDのプロジェクトが存在しない場合
+            ValueError: プロジェクトがTrusted Path配下にない場合（防御的チェック）
+        """
+        # get_project_by_idを使用してプロジェクトを取得
+        project = self.get_project_by_id(project_id)
+
+        self._active_project_id = project_id
+        logger.info("Switched to project #%d: %s", project_id, project.path)
+        return Project(id=project.id, path=project.path, is_active=True)
