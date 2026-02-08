@@ -142,14 +142,7 @@ class ACPBot(commands.Bot):
                 logger.error("Channel is not a thread", channel_id=thread_id)
                 return
 
-            # discord.py v2.xではThreadもtrigger_typing()をサポート
-            if not hasattr(thread, "trigger_typing"):
-                logger.warning(
-                    "trigger_typing not available for thread", thread_id=thread_id
-                )
-                return
-
-            await thread.trigger_typing()  # type: ignore[attr-defined]
+            await thread.typing()
             logger.debug("Triggered typing indicator for thread", thread_id=thread_id)
 
         except Exception:

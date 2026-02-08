@@ -142,15 +142,23 @@ class ACPClient:
                 tool_call: ToolCallUpdate,
                 **kwargs: Any,
             ) -> RequestPermissionResponse:
-                """パーミッション要求（未実装）."""
-                logger.warning("request_permission is not implemented")
-                # デフォルトで最初のオプションを許可
+                """パーミッション要求を自動承認する."""
+                logger.info(
+                    "Auto-approving permission request",
+                    session_id=session_id,
+                    tool_name=getattr(tool_call, "name", None),
+                    option_count=len(options),
+                )
                 if options:
+                    # allow_always を優先、なければ最初のオプションを選択
+                    selected = next(
+                        (o for o in options if o.kind == "allow_always"),
+                        options[0],
+                    )
                     outcome: AllowedOutcome | DeniedOutcome = AllowedOutcome(
-                        outcome="selected", option_id=options[0].id
+                        outcome="selected", option_id=selected.option_id
                     )
                 else:
-                    # オプションがない場合は拒否
                     outcome = DeniedOutcome(outcome="cancelled")
                 return RequestPermissionResponse(outcome=outcome)
 

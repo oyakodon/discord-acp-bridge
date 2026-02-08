@@ -311,5 +311,73 @@ async def test_get_current_model_no_session_model_state(
     await acp_client.close()
 
 
+@pytest.mark.asyncio
+async def test_request_permission_with_options() -> None:
+    """request_permission: オプションありで自動承認されるテスト."""
+    client = ACPClient(command=["claude-code-acp"])
+    client_impl = client._client_impl
+
+    # PermissionOption のモック
+    option1 = MagicMock()
+    option1.option_id = "opt-1"
+    option1.kind = "allow_once"
+
+    option2 = MagicMock()
+    option2.option_id = "opt-2"
+    option2.kind = "allow_always"
+
+    tool_call = MagicMock()
+    tool_call.name = "bash"
+
+    result = await client_impl.request_permission(
+        options=[option1, option2],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    # allow_always が優先されること
+    assert result.outcome.outcome == "selected"
+    assert result.outcome.option_id == "opt-2"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_no_allow_always() -> None:
+    """request_permission: allow_alwaysがない場合は最初のオプションを選択."""
+    client = ACPClient(command=["claude-code-acp"])
+    client_impl = client._client_impl
+
+    option1 = MagicMock()
+    option1.option_id = "opt-1"
+    option1.kind = "allow_once"
+
+    tool_call = MagicMock()
+
+    result = await client_impl.request_permission(
+        options=[option1],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    assert result.outcome.outcome == "selected"
+    assert result.outcome.option_id == "opt-1"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_no_options() -> None:
+    """request_permission: オプションなしの場合はcancelledを返すテスト."""
+    client = ACPClient(command=["claude-code-acp"])
+    client_impl = client._client_impl
+
+    tool_call = MagicMock()
+
+    result = await client_impl.request_permission(
+        options=[],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    assert result.outcome.outcome == "cancelled"
+
+
 # Watchdog timeout と session_update のテストは複雑なモックが必要なため省略
 # 実際の統合テストで検証する
