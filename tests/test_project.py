@@ -8,6 +8,7 @@ import pytest
 
 from discord_acp_bridge.application.project import (
     Project,
+    ProjectCreationError,
     ProjectNotFoundError,
     ProjectService,
 )
@@ -50,7 +51,7 @@ def config_with_trusted_paths(
 
 
 @pytest.fixture
-def config_empty(tmp_path: Path) -> Config:
+def config_empty() -> Config:
     """Trusted Pathsが空の設定を作成する."""
     config = Config(
         discord_bot_token="test_token",
@@ -219,3 +220,153 @@ class TestProjectNotFoundError:
         error = ProjectNotFoundError(42)
         assert error.project_id == 42
         assert "Project #42 not found" in str(error)
+
+
+class TestCreateProject:
+    """create_projectメソッドのテスト."""
+
+    def test_create_project_success(
+        self,
+        config_with_trusted_paths: Config,
+        temp_trusted_root: Path,
+    ) -> None:
+        """正常にプロジェクトを作成できることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = service.create_project("new_project")
+
+        assert project.path == str(temp_trusted_root / "new_project")
+        assert (temp_trusted_root / "new_project").is_dir()
+
+    def test_create_project_returns_correct_id(
+        self,
+        config_with_trusted_paths: Config,
+        temp_trusted_root: Path,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """作成後のプロジェクトIDがソート順で正しく割り当てられることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        # 既存: project1, project2, project3
+        # "aaa_project" はソート順で最初になる
+        project = service.create_project("aaa_project")
+
+        assert project.id == 1
+        assert project.path == str(temp_trusted_root / "aaa_project")
+
+    def test_create_project_strips_whitespace(
+        self,
+        config_with_trusted_paths: Config,
+        temp_trusted_root: Path,
+    ) -> None:
+        """前後の空白がトリムされることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = service.create_project("  my_project  ")
+
+        assert project.path == str(temp_trusted_root / "my_project")
+        assert (temp_trusted_root / "my_project").is_dir()
+
+    def test_create_project_empty_name(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """空の名前でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="プロジェクト名を指定"):
+            service.create_project("")
+
+    def test_create_project_whitespace_only_name(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """空白のみの名前でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="プロジェクト名を指定"):
+            service.create_project("   ")
+
+    def test_create_project_path_traversal_slash(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """パストラバーサル（/）でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="パス区切り文字"):
+            service.create_project("../escape")
+
+    def test_create_project_path_traversal_backslash(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """パストラバーサル（\\）でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="パス区切り文字"):
+            service.create_project("..\\escape")
+
+    def test_create_project_hidden_directory(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """隠しディレクトリ名でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="`.`"):
+            service.create_project(".hidden")
+
+    def test_create_project_already_exists(
+        self,
+        config_with_trusted_paths: Config,
+        temp_trusted_root: Path,
+    ) -> None:
+        """既存のディレクトリ名でエラーになることを確認する."""
+        (temp_trusted_root / "existing").mkdir()
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="既に存在します"):
+            service.create_project("existing")
+
+    def test_create_project_no_trusted_paths(
+        self,
+        config_empty: Config,
+    ) -> None:
+        """Trusted Pathsが空でエラーになることを確認する."""
+        service = ProjectService(config_empty)
+
+        with pytest.raises(ProjectCreationError, match="Trusted Paths"):
+            service.create_project("any_project")
+
+    def test_create_project_null_byte_in_name(
+        self,
+        config_with_trusted_paths: Config,
+    ) -> None:
+        """ヌルバイトを含む名前でエラーになることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+
+        with pytest.raises(ProjectCreationError, match="パス区切り文字"):
+            service.create_project("bad\0name")
+
+    def test_create_project_nonexistent_trusted_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Trusted Pathが存在しない場合にエラーになることを確認する."""
+        config = Config(
+            discord_bot_token="test_token",
+            discord_guild_id=123456789,
+            discord_allowed_user_id=987654321,
+            trusted_paths=[str(tmp_path / "nonexistent")],
+        )
+        service = ProjectService(config)
+
+        with pytest.raises(ProjectCreationError, match="Trusted Pathが存在しません"):
+            service.create_project("new_project")
+
+
+class TestProjectCreationError:
+    """ProjectCreationErrorのテスト."""
+
+    def test_error_message(self) -> None:
+        """エラーメッセージのテスト."""
+        error = ProjectCreationError("test error")
+        assert str(error) == "test error"

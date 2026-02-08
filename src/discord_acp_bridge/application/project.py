@@ -36,6 +36,19 @@ class ProjectNotFoundError(Exception):
         self.project_id = project_id
 
 
+class ProjectCreationError(Exception):
+    """プロジェクト作成に失敗した場合の例外."""
+
+    def __init__(self, message: str) -> None:
+        """
+        Initialize ProjectCreationError.
+
+        Args:
+            message: エラーメッセージ
+        """
+        super().__init__(message)
+
+
 class ProjectService:
     """プロジェクト管理サービス."""
 
@@ -70,12 +83,12 @@ class ProjectService:
                 continue
         return False
 
-    def list_projects(self) -> list[Project]:
+    def _scan_project_paths(self) -> list[str]:
         """
-        Trusted Path配下のディレクトリを自動スキャンしてプロジェクト一覧を取得する.
+        Trusted Path配下のプロジェクトパスを収集する.
 
         Returns:
-            プロジェクト一覧（パス名でソート済み、ID順）
+            ソート済みのプロジェクトパスリスト
         """
         discovered_paths: list[str] = []
 
@@ -95,13 +108,14 @@ class ProjectService:
             try:
                 for item in trusted_path.iterdir():
                     if item.is_dir() and not item.name.startswith("."):
+                        resolved = item.resolve()
                         # シンボリックリンク攻撃を防ぐため、Trusted Path検証を実施
-                        if self._is_path_trusted(item):
-                            discovered_paths.append(str(item.resolve()))
+                        if self._is_path_trusted(resolved):
+                            discovered_paths.append(str(resolved))
                         else:
                             logger.warning(
                                 "Skipping directory outside trusted paths",
-                                path=str(item),
+                                path=str(resolved),
                             )
             except PermissionError:
                 logger.warning(
@@ -109,17 +123,102 @@ class ProjectService:
                 )
                 continue
 
-        # パス名でソート
         discovered_paths.sort()
+        return discovered_paths
 
-        # Projectモデルに変換
-        projects = []
-        for idx, path in enumerate(discovered_paths):
-            project_id = idx + 1
-            projects.append(Project(id=project_id, path=path))
+    def list_projects(self) -> list[Project]:
+        """
+        Trusted Path配下のディレクトリを自動スキャンしてプロジェクト一覧を取得する.
+
+        Returns:
+            プロジェクト一覧（パス名でソート済み、ID順）
+        """
+        discovered_paths = self._scan_project_paths()
+
+        projects = [
+            Project(id=idx + 1, path=path) for idx, path in enumerate(discovered_paths)
+        ]
 
         logger.debug("Listed projects from trusted paths", project_count=len(projects))
         return projects
+
+    def create_project(self, name: str) -> Project:
+        """
+        Trusted Pathの最初のパス配下に新しいプロジェクトディレクトリを作成する.
+
+        Args:
+            name: プロジェクト名（ディレクトリ名として使用される）
+
+        Returns:
+            作成されたプロジェクト
+
+        Raises:
+            ProjectCreationError: プロジェクト作成に失敗した場合
+        """
+        # Trusted Pathsが設定されているか確認
+        if not self._config.trusted_paths:
+            raise ProjectCreationError(
+                "Trusted Pathsが設定されていません。"
+                "環境変数 TRUSTED_PATHS を設定してください。"
+            )
+
+        # 名前のバリデーション
+        name = name.strip()
+        if not name:
+            raise ProjectCreationError("プロジェクト名を指定してください。")
+
+        # パストラバーサル防止
+        if "/" in name or "\\" in name or "\0" in name:
+            raise ProjectCreationError(
+                "プロジェクト名にパス区切り文字は使用できません。"
+            )
+
+        # 隠しディレクトリの防止
+        if name.startswith("."):
+            raise ProjectCreationError(
+                "プロジェクト名を `.` で始めることはできません。"
+            )
+
+        # Trusted Paths[0]配下に作成
+        base_path = Path(self._config.trusted_paths[0]).resolve()
+
+        if not base_path.exists():
+            raise ProjectCreationError(f"Trusted Pathが存在しません: {base_path}")
+
+        if not base_path.is_dir():
+            raise ProjectCreationError(
+                f"Trusted Pathがディレクトリではありません: {base_path}"
+            )
+
+        project_path = base_path / name
+
+        # ディレクトリが既に存在するか確認
+        if project_path.exists():
+            raise ProjectCreationError(f"既に存在します: {project_path}")
+
+        # 防御的チェック: パストラバーサル対策の最終確認
+        if not self._is_path_trusted(project_path):
+            raise ProjectCreationError(
+                "プロジェクト名が不正です。Trusted Path外になります。"
+            )
+
+        # ディレクトリを作成
+        try:
+            project_path.mkdir(parents=False, exist_ok=False)
+        except OSError as e:
+            raise ProjectCreationError(f"ディレクトリの作成に失敗しました: {e}") from e
+
+        logger.info(
+            "Created new project directory",
+            name=name,
+            path=str(project_path),
+        )
+
+        # パス一覧を取得してIDを計算
+        all_paths = self._scan_project_paths()
+        project_id = all_paths.index(str(project_path)) + 1
+
+        return Project(id=project_id, path=str(project_path))
 
     def get_project_by_id(self, project_id: int) -> Project:
         """

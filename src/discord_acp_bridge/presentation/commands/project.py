@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from discord_acp_bridge.application.project import ProjectCreationError
 from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
@@ -29,7 +30,11 @@ class ProjectCommands(commands.Cog):
         """
         self.bot = bot
 
-    @app_commands.command(name="projects", description="登録済みプロジェクト一覧を表示")
+    projects_group = app_commands.Group(
+        name="projects", description="プロジェクト管理コマンド"
+    )
+
+    @projects_group.command(name="list", description="登録済みプロジェクト一覧を表示")
     @is_allowed_user()
     async def list_projects(self, interaction: discord.Interaction) -> None:
         """
@@ -39,9 +44,9 @@ class ProjectCommands(commands.Cog):
             interaction: Discord Interaction
         """
         logger.info(
-            "User %s (ID: %d) requested project list",
-            interaction.user.name,
-            interaction.user.id,
+            "User requested project list",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
         )
 
         try:
@@ -67,6 +72,60 @@ class ProjectCommands(commands.Cog):
 
         except Exception:
             logger.exception("Error listing projects")
+            await interaction.response.send_message(
+                "エラーが発生しました。ログを確認してください。", ephemeral=True
+            )
+
+    @projects_group.command(
+        name="new", description="新しいプロジェクトディレクトリを作成"
+    )
+    @app_commands.describe(name="プロジェクト名（ディレクトリ名）")
+    @is_allowed_user()
+    async def new_project(self, interaction: discord.Interaction, name: str) -> None:
+        """
+        Trusted Pathの最初のパス配下に新しいプロジェクトディレクトリを作成する.
+
+        Args:
+            interaction: Discord Interaction
+            name: プロジェクト名
+        """
+        logger.info(
+            "User requested to create new project",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
+            project_name=name,
+        )
+
+        try:
+            project = self.bot.project_service.create_project(name)
+
+            await interaction.response.send_message(
+                f"プロジェクトを作成しました:\n"
+                f"**ID:** {project.id}\n"
+                f"**パス:** `{project.path}`",
+                ephemeral=True,
+            )
+
+            logger.info(
+                "Created new project",
+                project_id=project.id,
+                project_path=project.path,
+            )
+
+        except ProjectCreationError as e:
+            logger.warning(
+                "Project creation failed",
+                user_id=interaction.user.id,
+                project_name=name,
+                error=str(e),
+            )
+            await interaction.response.send_message(
+                f"プロジェクトの作成に失敗しました: {e}",
+                ephemeral=True,
+            )
+
+        except Exception:
+            logger.exception("Unexpected error creating project")
             await interaction.response.send_message(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )
