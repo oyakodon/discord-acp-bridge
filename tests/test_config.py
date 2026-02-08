@@ -13,6 +13,8 @@ def test_config_default_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "test_token")
     monkeypatch.setenv("DISCORD_GUILD_ID", "123456789")
     monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
+    # 環境変数のデフォルト値を明示的に設定（.envファイルの値も上書きされる）
+    monkeypatch.setenv("TRUSTED_PATHS", "[]")
 
     config = Config()
 
@@ -29,6 +31,7 @@ def test_config_custom_agent_command_list(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("DISCORD_GUILD_ID", "123456789")
     monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
     monkeypatch.setenv("AGENT_COMMAND", '["custom-agent", "--arg1", "value1"]')
+    monkeypatch.setenv("TRUSTED_PATHS", "[]")
 
     config = Config()
 
@@ -42,6 +45,7 @@ def test_config_custom_agent_command_string(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
     # Pydantic SettingsではList型はJSON形式で渡す必要がある
     monkeypatch.setenv("AGENT_COMMAND", '["custom-agent"]')
+    monkeypatch.setenv("TRUSTED_PATHS", "[]")
 
     config = Config()
 
