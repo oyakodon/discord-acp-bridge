@@ -23,11 +23,18 @@ from acp.schema import (
 )
 from pydantic import BaseModel, Field
 
+from discord_acp_bridge.application.models import (
+    PermissionRequest,  # noqa: TC001
+    PermissionResponse,  # noqa: TC001
+)
 from discord_acp_bridge.application.project import Project  # noqa: TC001
 from discord_acp_bridge.infrastructure.acp_client import ACPClient, UsageUpdate
 from discord_acp_bridge.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
+    from acp import RequestPermissionResponse
+    from acp.schema import PermissionOption, ToolCallUpdate
+
     from discord_acp_bridge.infrastructure.config import Config
 
 # コールバック型定義
@@ -36,6 +43,7 @@ TimeoutCallback = Callable[[int], Awaitable[None]]  # (thread_id) -> None
 TypingCallback = Callable[
     [int, bool], Awaitable[None]
 ]  # (thread_id, is_typing) -> None
+PermissionRequestCallback = Callable[[PermissionRequest], Awaitable[PermissionResponse]]
 
 logger = get_logger(__name__)
 
@@ -164,6 +172,7 @@ class SessionService:
         on_message: MessageCallback | None = None,
         on_timeout: TimeoutCallback | None = None,
         on_typing: TypingCallback | None = None,
+        on_permission_request: PermissionRequestCallback | None = None,
     ) -> None:
         """
         Initialize SessionService.
@@ -173,17 +182,21 @@ class SessionService:
             on_message: ACPからのメッセージ受信時のコールバック
             on_timeout: セッションタイムアウト時のコールバック
             on_typing: タイピングインジケーター制御時のコールバック
+            on_permission_request: パーミッション要求時のコールバック
         """
         self._config = config
         self._on_message_callback = on_message
         self._on_timeout_callback = on_timeout
         self._on_typing_callback = on_typing
+        self._on_permission_request_callback = on_permission_request
         # セッション管理（user_id -> Session）
         self._sessions: dict[int, Session] = {}
         # セッションID逆引きマップ（session_id -> Session）
         self._session_map: dict[str, Session] = {}
         # スレッドIDからセッションを検索するためのマップ
         self._thread_sessions: dict[int, str] = {}  # thread_id -> session_id
+        # ACPセッションID逆引きマップ（acp_session_id -> session_id）
+        self._acp_session_map: dict[str, str] = {}
         # ACP Clientのマップ（session_id -> ACPClient）
         self._acp_clients: dict[str, ACPClient] = {}
         # メッセージバッファリング用（thread_id -> buffer）
@@ -229,6 +242,7 @@ class SessionService:
             command=self._config.agent_command,
             on_session_update=self._on_session_update,
             on_timeout=self._on_timeout,
+            on_permission_request=self._handle_permission_request,
         )
 
         try:
@@ -252,6 +266,7 @@ class SessionService:
             # セッションを登録
             self._sessions[user_id] = session
             self._session_map[session.id] = session
+            self._acp_session_map[acp_session_id] = session.id
             self._acp_clients[session.id] = acp_client
             if thread_id is not None:
                 self._thread_sessions[thread_id] = session.id
@@ -628,6 +643,11 @@ class SessionService:
         # 将来的にクリーンアップ処理を実装する
         if session.thread_id is not None and session.thread_id in self._thread_sessions:
             del self._thread_sessions[session.thread_id]
+        if (
+            session.acp_session_id is not None
+            and session.acp_session_id in self._acp_session_map
+        ):
+            del self._acp_session_map[session.acp_session_id]
 
         logger.info("Session closed", session_id=session_id)
 
@@ -675,6 +695,11 @@ class SessionService:
         # 将来的にクリーンアップ処理を実装する
         if session.thread_id is not None and session.thread_id in self._thread_sessions:
             del self._thread_sessions[session.thread_id]
+        if (
+            session.acp_session_id is not None
+            and session.acp_session_id in self._acp_session_map
+        ):
+            del self._acp_session_map[session.acp_session_id]
 
         logger.warning("Session killed", session_id=session_id)
 
@@ -967,5 +992,196 @@ class SessionService:
         # ただし、スレッドマッピングとACPクライアントは削除
         if session.thread_id is not None and session.thread_id in self._thread_sessions:
             del self._thread_sessions[session.thread_id]
+        if (
+            session.acp_session_id is not None
+            and session.acp_session_id in self._acp_session_map
+        ):
+            del self._acp_session_map[session.acp_session_id]
         if session.id in self._acp_clients:
             del self._acp_clients[session.id]
+
+    async def _handle_permission_request(
+        self,
+        acp_session_id: str,
+        options: list[PermissionOption],
+        tool_call: ToolCallUpdate,
+    ) -> RequestPermissionResponse:
+        """
+        ACP Clientからのパーミッション要求を処理する.
+
+        コールバックが設定されている場合はDiscord UIに委譲し、
+        設定されていないか permission_timeout=0 の場合は自動承認する。
+
+        Args:
+            acp_session_id: ACPセッションID
+            options: 選択可能なパーミッションオプション
+            tool_call: ツール呼び出し情報
+
+        Returns:
+            RequestPermissionResponse
+        """
+        from acp import RequestPermissionResponse as _RPR
+        from acp.schema import AllowedOutcome, DeniedOutcome
+
+        from discord_acp_bridge.application.models import (
+            PermissionOptionInfo,
+            ToolCallInfo,
+        )
+
+        # 自動承認: コールバックなし or timeout=0
+        if (
+            self._on_permission_request_callback is None
+            or self._config.permission_timeout == 0
+        ):
+            return self._auto_approve_permission(options)
+
+        # セッションを検索
+        session = self._find_session_by_acp_id(acp_session_id)
+        if session is None or session.thread_id is None:
+            logger.warning(
+                "No session/thread for permission request, auto-approving",
+                acp_session_id=acp_session_id,
+            )
+            return self._auto_approve_permission(options)
+
+        # ACP型 → 中間型に変換
+        perm_request = PermissionRequest(
+            session_id=session.id,
+            acp_session_id=acp_session_id,
+            thread_id=session.thread_id,
+            tool_call=ToolCallInfo(
+                tool_call_id=tool_call.tool_call_id,
+                title=tool_call.title or "Unknown",
+                kind=tool_call.kind or "unknown",
+                raw_input=_format_raw_input(tool_call.raw_input),
+                content_summary=_format_content_summary(tool_call.content),
+            ),
+            options=[
+                PermissionOptionInfo(
+                    option_id=o.option_id,
+                    name=o.name,
+                    kind=o.kind,
+                )
+                for o in options
+            ],
+        )
+
+        # Discord UIにパーミッション要求を送信し、応答を待つ
+        try:
+            perm_response = await asyncio.wait_for(
+                self._on_permission_request_callback(perm_request),
+                timeout=self._config.permission_timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Permission request timed out, auto-approving",
+                session_id=session.id,
+                timeout=self._config.permission_timeout,
+            )
+            return self._auto_approve_permission(options)
+
+        # 応答を変換
+        if perm_response.approved:
+            option_id = perm_response.option_id
+            if option_id is None and options:
+                # デフォルトは allow_always を優先、なければ allow_once
+                selected = next(
+                    (o for o in options if o.kind == "allow_always"),
+                    next(
+                        (o for o in options if o.kind == "allow_once"),
+                        options[0],
+                    ),
+                )
+                option_id = selected.option_id
+            if option_id is not None:
+                outcome: AllowedOutcome | DeniedOutcome = AllowedOutcome(
+                    outcome="selected", option_id=option_id
+                )
+            else:
+                outcome = DeniedOutcome(outcome="cancelled")
+        else:
+            outcome = DeniedOutcome(outcome="cancelled")
+
+            # 拒否+指示がある場合、非同期でsend_promptを送信
+            if perm_response.instructions:
+                self._send_rejection_instructions(
+                    session.id, perm_response.instructions
+                )
+
+        return _RPR(outcome=outcome)
+
+    def _find_session_by_acp_id(self, acp_session_id: str) -> Session | None:
+        """ACPセッションIDからセッションを検索する."""
+        session_id = self._acp_session_map.get(acp_session_id)
+        if session_id is None:
+            return None
+        return self._session_map.get(session_id)
+
+    def _auto_approve_permission(
+        self,
+        options: list[PermissionOption],
+    ) -> RequestPermissionResponse:
+        """パーミッション要求を自動承認する."""
+        from acp import RequestPermissionResponse as _RPR
+        from acp.schema import AllowedOutcome, DeniedOutcome
+
+        if options:
+            selected = next(
+                (o for o in options if o.kind == "allow_always"),
+                options[0],
+            )
+            outcome: AllowedOutcome | DeniedOutcome = AllowedOutcome(
+                outcome="selected", option_id=selected.option_id
+            )
+        else:
+            outcome = DeniedOutcome(outcome="cancelled")
+        return _RPR(outcome=outcome)
+
+    def _send_rejection_instructions(self, session_id: str, instructions: str) -> None:
+        """拒否+指示時に非同期でsend_promptを送信する."""
+
+        async def _send() -> None:
+            try:
+                await self.send_prompt(session_id, instructions)
+            except Exception:
+                logger.exception(
+                    "Error sending rejection instructions",
+                    session_id=session_id,
+                )
+
+        task = asyncio.create_task(_send())
+
+        def _handle_task_exception(t: asyncio.Task[None]) -> None:
+            if not t.cancelled() and t.exception() is not None:
+                logger.error(
+                    "Rejection instructions task failed unexpectedly",
+                    session_id=session_id,
+                )
+
+        task.add_done_callback(_handle_task_exception)
+
+
+def _format_raw_input(raw_input: object) -> str:
+    """ToolCallUpdate.raw_input を文字列に変換する."""
+    if raw_input is None:
+        return ""
+    if isinstance(raw_input, str):
+        return raw_input[:500]
+    import json
+
+    try:
+        return json.dumps(raw_input, ensure_ascii=False)[:500]
+    except (TypeError, ValueError):
+        return str(raw_input)[:500]
+
+
+def _format_content_summary(content: object) -> str:
+    """ToolCallUpdate.content を要約文字列に変換する."""
+    if not content or not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        text = getattr(item, "text", None) or getattr(item, "content", None)
+        if text and isinstance(text, str):
+            parts.append(text[:200])
+    return "\n".join(parts)[:500]

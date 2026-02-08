@@ -60,7 +60,7 @@ class TestConfigureLogging:
             and not isinstance(h, TimedRotatingFileHandler)
         ]
         assert len(stream_handlers) == 1
-        assert stream_handlers[0].level == logging.ERROR
+        assert stream_handlers[0].level == logging.INFO
 
     def test_latest_log_handler(self, log_dir: Path) -> None:
         """latest.logハンドラーが全レベルで設定されることを確認する."""

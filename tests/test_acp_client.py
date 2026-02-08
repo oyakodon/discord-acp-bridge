@@ -427,5 +427,96 @@ async def test_close_with_context_error(
     assert acp_client._acp_session_id is None
 
 
+@pytest.mark.asyncio
+async def test_request_permission_with_callback() -> None:
+    """request_permission: コールバックがある場合に委譲されるテスト."""
+    from acp import RequestPermissionResponse
+    from acp.schema import AllowedOutcome
+
+    expected_response = RequestPermissionResponse(
+        outcome=AllowedOutcome(outcome="selected", option_id="opt-1")
+    )
+    callback = AsyncMock(return_value=expected_response)
+
+    client = ACPClient(
+        command=["claude-code-acp"],
+        on_permission_request=callback,
+    )
+    client_impl = client._client_impl
+
+    option1 = MagicMock()
+    option1.option_id = "opt-1"
+    option1.kind = "allow_once"
+
+    tool_call = MagicMock()
+    tool_call.title = "bash"
+
+    result = await client_impl.request_permission(
+        options=[option1],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    callback.assert_awaited_once_with("test-session", [option1], tool_call)
+    assert result.outcome.outcome == "selected"
+    assert result.outcome.option_id == "opt-1"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_callback_none_falls_back() -> None:
+    """request_permission: コールバックがNoneの場合は自動承認にフォールバック."""
+    client = ACPClient(command=["claude-code-acp"], on_permission_request=None)
+    client_impl = client._client_impl
+
+    option1 = MagicMock()
+    option1.option_id = "opt-1"
+    option1.kind = "allow_always"
+
+    tool_call = MagicMock()
+    tool_call.title = "bash"
+
+    result = await client_impl.request_permission(
+        options=[option1],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    assert result.outcome.outcome == "selected"
+    assert result.outcome.option_id == "opt-1"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_callback_error_falls_back() -> None:
+    """request_permission: コールバックがエラーの場合は自動承認にフォールバック."""
+    callback = AsyncMock(side_effect=RuntimeError("callback error"))
+
+    client = ACPClient(
+        command=["claude-code-acp"],
+        on_permission_request=callback,
+    )
+    client_impl = client._client_impl
+
+    option1 = MagicMock()
+    option1.option_id = "opt-1"
+    option1.kind = "allow_once"
+
+    option2 = MagicMock()
+    option2.option_id = "opt-2"
+    option2.kind = "allow_always"
+
+    tool_call = MagicMock()
+    tool_call.title = "bash"
+
+    result = await client_impl.request_permission(
+        options=[option1, option2],
+        session_id="test-session",
+        tool_call=tool_call,
+    )
+
+    # エラー時は自動承認（allow_always優先）
+    assert result.outcome.outcome == "selected"
+    assert result.outcome.option_id == "opt-2"
+
+
 # Watchdog timeout と session_update のテストは複雑なモックが必要なため省略
 # 実際の統合テストで検証する

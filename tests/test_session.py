@@ -576,3 +576,280 @@ class TestSessionModelFeatures:
             match="Cannot change model of session that is not yet active",
         ):
             await service.set_model(session.id, "claude-opus-4-6")
+
+
+class TestPermissionHandling:
+    """パーミッション処理のテスト."""
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_auto_approve_no_callback(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """コールバックなしの場合は自動承認するテスト."""
+        service = SessionService(config, on_permission_request=None)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        assert result.outcome.outcome == "selected"
+        assert result.outcome.option_id == "opt-1"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_auto_approve_timeout_zero(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """permission_timeout=0の場合は自動承認するテスト."""
+        config.permission_timeout = 0
+        callback = AsyncMock()
+
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        callback.assert_not_called()
+        assert result.outcome.outcome == "selected"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_delegates_to_callback(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """コールバックに委譲されるテスト."""
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+
+        async def perm_callback(
+            request: PermissionRequest,
+        ) -> PermissionResponse:
+            return PermissionResponse(approved=True, option_id="opt-2")
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option1 = MagicMock()
+        option1.option_id = "opt-1"
+        option1.kind = "allow_once"
+        option1.name = "Allow Once"
+
+        option2 = MagicMock()
+        option2.option_id = "opt-2"
+        option2.kind = "allow_always"
+        option2.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option1, option2], tool_call
+        )
+
+        callback.assert_awaited_once()
+        assert result.outcome.outcome == "selected"
+        assert result.outcome.option_id == "opt-2"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_denied(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """拒否レスポンスのテスト."""
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+
+        async def perm_callback(
+            request: PermissionRequest,
+        ) -> PermissionResponse:
+            return PermissionResponse(approved=False)
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_denied_with_instructions(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """拒否+指示レスポンスのテスト."""
+        import asyncio
+
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+
+        async def perm_callback(
+            request: PermissionRequest,
+        ) -> PermissionResponse:
+            return PermissionResponse(approved=False, instructions="Use cat instead")
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        assert result.outcome.outcome == "cancelled"
+
+        # 非同期タスクが作成されていることを確認
+        await asyncio.sleep(0.1)
+
+        acp_instance = mock_acp_client.return_value
+        acp_instance.send_prompt.assert_awaited_with(
+            "test_acp_session_id", "Use cat instead"
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_timeout_auto_approves(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """タイムアウト時に自動承認されるテスト."""
+        import asyncio
+
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+
+        async def slow_callback(
+            request: PermissionRequest,
+        ) -> PermissionResponse:
+            await asyncio.sleep(10)
+            return PermissionResponse(approved=False)
+
+        config.permission_timeout = 0.1
+        callback = AsyncMock(side_effect=slow_callback)
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        assert result.outcome.outcome == "selected"
+        assert result.outcome.option_id == "opt-1"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_request_no_session_auto_approves(
+        self,
+        config: Config,
+    ) -> None:
+        """セッションが見つからない場合の自動承認テスト."""
+        callback = AsyncMock()
+        service = SessionService(config, on_permission_request=callback)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "unknown-session", [option], tool_call
+        )
+
+        callback.assert_not_called()
+        assert result.outcome.outcome == "selected"

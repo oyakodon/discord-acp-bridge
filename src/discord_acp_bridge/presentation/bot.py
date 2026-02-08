@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING
+
 import discord
 from discord import Intents, app_commands
 from discord.ext import commands
@@ -10,6 +13,12 @@ from discord_acp_bridge.application.project import ProjectService  # noqa: TC001
 from discord_acp_bridge.application.session import SessionService  # noqa: TC001
 from discord_acp_bridge.infrastructure.config import Config  # noqa: TC001
 from discord_acp_bridge.infrastructure.logging import get_logger
+
+if TYPE_CHECKING:
+    from discord_acp_bridge.application.models import (
+        PermissionRequest,
+        PermissionResponse,
+    )
 
 logger = get_logger(__name__)
 
@@ -149,6 +158,56 @@ class ACPBot(commands.Bot):
             logger.exception(
                 "Error triggering typing indicator for thread", thread_id=thread_id
             )
+
+    async def send_permission_request(
+        self, request: PermissionRequest
+    ) -> PermissionResponse:
+        """
+        パーミッション要求をスレッドに送信し、ユーザーの応答を待つ.
+
+        Args:
+            request: パーミッション要求
+
+        Returns:
+            ユーザーの応答
+        """
+        from discord_acp_bridge.application.models import (
+            PermissionResponse as _PR,
+        )
+        from discord_acp_bridge.presentation.views.permission import (
+            PermissionView as _PV,
+        )
+        from discord_acp_bridge.presentation.views.permission import (
+            build_permission_embed as _build_embed,
+        )
+
+        thread = self.get_channel(request.thread_id)
+        if not isinstance(thread, discord.Thread):
+            logger.error(
+                "Channel is not a thread for permission request",
+                channel_id=request.thread_id,
+            )
+            return _PR(approved=True)
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[_PR] = loop.create_future()
+
+        embed = _build_embed(request)
+        view = _PV(
+            request,
+            future,
+            timeout=self.config.permission_timeout,
+        )
+
+        await thread.send(embed=embed, view=view)
+
+        logger.info(
+            "Sent permission request to thread",
+            thread_id=request.thread_id,
+            session_id=request.session_id,
+        )
+
+        return await future
 
     async def setup_hook(self) -> None:
         """

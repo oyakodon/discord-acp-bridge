@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from acp import (
@@ -20,10 +20,8 @@ from acp.schema import (
     AgentMessageChunk,
     AgentPlanUpdate,
     AgentThoughtChunk,
-    AllowedOutcome,
     AvailableCommandsUpdate,
     CurrentModeUpdate,
-    DeniedOutcome,
     EnvVariable,
     Implementation,
     InitializeResponse,  # noqa: TC001
@@ -85,6 +83,10 @@ SessionUpdateCallback = Callable[
     None,
 ]
 TimeoutCallback = Callable[[str], None]
+PermissionRequestCallback = Callable[
+    [str, list[PermissionOption], ToolCallUpdate],
+    Awaitable[RequestPermissionResponse],
+]
 
 
 class ACPClient:
@@ -95,6 +97,7 @@ class ACPClient:
         command: list[str],
         on_session_update: SessionUpdateCallback | None = None,
         on_timeout: TimeoutCallback | None = None,
+        on_permission_request: PermissionRequestCallback | None = None,
     ) -> None:
         """
         ACP Client を初期化する.
@@ -103,6 +106,7 @@ class ACPClient:
             command: ACP Server を起動するコマンド（例: ["claude-code-acp"]）
             on_session_update: session/update 通知を受け取るコールバック
             on_timeout: Watchdog タイムアウト時に呼ばれるコールバック
+            on_permission_request: パーミッション要求時に呼ばれるコールバック
 
         Raises:
             ValueError: commandが空の場合
@@ -114,6 +118,7 @@ class ACPClient:
         self.command = command
         self.on_session_update = on_session_update
         self.on_timeout = on_timeout
+        self.on_permission_request = on_permission_request
 
         self._context: Any = None
         self._connection: ClientSideConnection | None = None
@@ -142,25 +147,24 @@ class ACPClient:
                 tool_call: ToolCallUpdate,
                 **kwargs: Any,
             ) -> RequestPermissionResponse:
-                """パーミッション要求を自動承認する."""
-                logger.info(
-                    "Auto-approving permission request",
-                    session_id=session_id,
-                    tool_name=getattr(tool_call, "name", None),
-                    option_count=len(options),
-                )
-                if options:
-                    # allow_always を優先、なければ最初のオプションを選択
-                    selected = next(
-                        (o for o in options if o.kind == "allow_always"),
-                        options[0],
+                """パーミッション要求を処理する."""
+                if self.parent.on_permission_request is not None:
+                    logger.info(
+                        "Delegating permission request to callback",
+                        session_id=session_id,
+                        tool_name=getattr(tool_call, "title", None),
+                        option_count=len(options),
                     )
-                    outcome: AllowedOutcome | DeniedOutcome = AllowedOutcome(
-                        outcome="selected", option_id=selected.option_id
-                    )
-                else:
-                    outcome = DeniedOutcome(outcome="cancelled")
-                return RequestPermissionResponse(outcome=outcome)
+                    try:
+                        return await self.parent.on_permission_request(
+                            session_id, options, tool_call
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Error in permission request callback, falling back to auto-approve"
+                        )
+
+                return _auto_approve(session_id, options, tool_call)
 
             async def session_update(
                 self,
@@ -601,3 +605,30 @@ class ACPClient:
         await self._cleanup_connection()
         await self._cleanup_process(force=True)
         self._acp_session_id = None
+
+
+def _auto_approve(
+    session_id: str,
+    options: list[PermissionOption],
+    tool_call: ToolCallUpdate,
+) -> RequestPermissionResponse:
+    """パーミッション要求を自動承認する."""
+    from acp.schema import AllowedOutcome, DeniedOutcome
+
+    logger.info(
+        "Auto-approving permission request",
+        session_id=session_id,
+        tool_name=getattr(tool_call, "title", None),
+        option_count=len(options),
+    )
+    if options:
+        selected = next(
+            (o for o in options if o.kind == "allow_always"),
+            options[0],
+        )
+        outcome: AllowedOutcome | DeniedOutcome = AllowedOutcome(
+            outcome="selected", option_id=selected.option_id
+        )
+    else:
+        outcome = DeniedOutcome(outcome="cancelled")
+    return RequestPermissionResponse(outcome=outcome)

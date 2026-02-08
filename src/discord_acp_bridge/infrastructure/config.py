@@ -43,6 +43,12 @@ class Config(BaseSettings):
         description="プロジェクトとして許可するディレクトリのルートパスのリスト",
     )
 
+    # パーミッション設定
+    permission_timeout: float = Field(
+        default=120.0,
+        description="パーミッション要求のタイムアウト秒数（0で自動承認）",
+    )
+
     # ロギング設定
     log_level: str = Field(
         default="INFO",

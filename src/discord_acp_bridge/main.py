@@ -69,6 +69,7 @@ async def main() -> None:
             on_message=bot.send_message_to_thread,
             on_timeout=bot.send_timeout_notification,
             on_typing=bot.set_typing_indicator,
+            on_permission_request=bot.send_permission_request,
         )
 
         # BotにSessionServiceを設定
