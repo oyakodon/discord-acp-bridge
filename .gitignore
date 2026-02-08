@@ -218,6 +218,9 @@ __marimo__/
 # local
 .local/
 
+# Logs
+logs/
+
 # Claude Code
 .claude/
 

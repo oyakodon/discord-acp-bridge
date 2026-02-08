@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 import sys
 
@@ -18,7 +19,11 @@ async def main() -> None:
     config = get_config()
 
     # 構造化ロギングを設定
-    configure_logging(log_level=config.log_level)
+    configure_logging(
+        log_level=config.log_level,
+        log_dir=config.log_dir,
+        log_backup_count=config.log_backup_count,
+    )
 
     logger = get_logger(__name__)
 
@@ -119,6 +124,9 @@ async def main() -> None:
             loop.remove_signal_handler(sig)
 
         logger.info("Shutdown complete")
+
+        # ログのフラッシュと確実なクローズ
+        logging.shutdown()
 
 
 if __name__ == "__main__":

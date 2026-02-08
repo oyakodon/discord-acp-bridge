@@ -48,6 +48,14 @@ class Config(BaseSettings):
         default="INFO",
         description="ログレベル（DEBUG, INFO, WARNING, ERROR, CRITICAL）",
     )
+    log_dir: str = Field(
+        default="logs",
+        description="ログ出力ディレクトリ",
+    )
+    log_backup_count: int = Field(
+        default=7,
+        description="ログローテーションの保持日数",
+    )
 
     @field_validator("agent_command", mode="before")
     @classmethod
