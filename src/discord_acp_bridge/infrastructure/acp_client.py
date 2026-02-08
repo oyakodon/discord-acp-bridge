@@ -410,11 +410,15 @@ class ACPClient:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        if self._init_response.session_model_state is None:
-            logger.warning("SessionModelState is not available")
+        session_model_state = getattr(self._init_response, "session_model_state", None)
+        if session_model_state is None:
+            logger.warning(
+                "SessionModelState is not available in InitializeResponse",
+                init_response_type=type(self._init_response).__name__,
+            )
             return []
 
-        models: list[str] = self._init_response.session_model_state.available_models
+        models: list[str] = session_model_state.available_models
         return models
 
     def get_current_model(self) -> str | None:
@@ -431,11 +435,15 @@ class ACPClient:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        if self._init_response.session_model_state is None:
-            logger.warning("SessionModelState is not available")
+        session_model_state = getattr(self._init_response, "session_model_state", None)
+        if session_model_state is None:
+            logger.warning(
+                "SessionModelState is not available in InitializeResponse",
+                init_response_type=type(self._init_response).__name__,
+            )
             return None
 
-        model_id: str | None = self._init_response.session_model_state.current_model_id
+        model_id: str | None = session_model_state.current_model_id
         return model_id
 
     async def cancel_session(self, session_id: str) -> None:

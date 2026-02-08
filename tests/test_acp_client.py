@@ -267,5 +267,49 @@ def test_get_current_model_not_initialized() -> None:
         client.get_current_model()
 
 
+@pytest.mark.asyncio
+async def test_get_available_models_no_session_model_state(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """session_model_stateが存在しない場合のget_available_models()テスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # session_model_state 属性を削除して、存在しない状態をシミュレート
+    init_response = acp_client._init_response
+    if init_response is not None and hasattr(init_response, "session_model_state"):
+        delattr(init_response, "session_model_state")
+
+    # 利用可能なモデル一覧を取得（空リストが返ることを期待）
+    models = acp_client.get_available_models()
+    assert models == []
+
+    # クリーンアップ
+    await acp_client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_current_model_no_session_model_state(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """session_model_stateが存在しない場合のget_current_model()テスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # session_model_state 属性を削除して、存在しない状態をシミュレート
+    init_response = acp_client._init_response
+    if init_response is not None and hasattr(init_response, "session_model_state"):
+        delattr(init_response, "session_model_state")
+
+    # 現在のモデルを取得（Noneが返ることを期待）
+    current_model = acp_client.get_current_model()
+    assert current_model is None
+
+    # クリーンアップ
+    await acp_client.close()
+
+
 # Watchdog timeout と session_update のテストは複雑なモックが必要なため省略
 # 実際の統合テストで検証する
