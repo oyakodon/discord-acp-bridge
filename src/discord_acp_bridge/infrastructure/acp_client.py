@@ -486,10 +486,15 @@ class ACPClient:
         # Watchdog Timer を停止
         self._stop_watchdog()
 
-        # コンテキストマネージャを適切にクローズ
+        # コンテキストマネージャを適切にクローズ（タイムアウト付き）
         if self._context is not None:
             try:
-                await self._context.__aexit__(None, None, None)
+                await asyncio.wait_for(
+                    self._context.__aexit__(None, None, None),
+                    timeout=3.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Context close timed out, forcing cleanup")
             except Exception:
                 logger.exception("Error during context cleanup")
             finally:

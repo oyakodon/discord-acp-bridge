@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,6 +378,53 @@ async def test_request_permission_no_options() -> None:
     )
 
     assert result.outcome.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_close_with_context_timeout(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """close()でコンテキストクローズがタイムアウトした場合のテスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # __aexit__ がタイムアウトするようにモック
+    async def slow_aexit(*args: Any) -> None:
+        await asyncio.sleep(10)  # 3秒のタイムアウトを超える
+
+    mock_spawn_agent_process.return_value.__aexit__ = slow_aexit
+
+    # close()がタイムアウトしても正常に完了すること
+    await acp_client.close()
+
+    # 状態がクリアされたことを確認
+    assert acp_client._context is None
+    assert acp_client._connection is None
+    assert acp_client._process is None
+    assert acp_client._acp_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_close_with_context_error(
+    acp_client: ACPClient,
+    mock_spawn_agent_process: MagicMock,
+) -> None:
+    """close()でコンテキストクローズがエラーを起こした場合のテスト."""
+    # 初期化
+    await acp_client.initialize("/path/to/project")
+
+    # __aexit__ がエラーを起こすようにモック
+    mock_spawn_agent_process.return_value.__aexit__ = AsyncMock(
+        side_effect=RuntimeError("async generator error")
+    )
+
+    # close()がエラーでも正常に完了すること
+    await acp_client.close()
+
+    # 状態がクリアされたことを確認
+    assert acp_client._context is None
+    assert acp_client._acp_session_id is None
 
 
 # Watchdog timeout と session_update のテストは複雑なモックが必要なため省略
