@@ -717,7 +717,7 @@ class SessionService:
                     "Error flushing message buffer to thread", thread_id=thread_id
                 )
 
-    def _schedule_buffer_flush(self, thread_id: int, delay: float = 0.5) -> None:
+    def _schedule_buffer_flush(self, thread_id: int, delay: float = 1.5) -> None:
         """
         バッファフラッシュをスケジュールする.
 
