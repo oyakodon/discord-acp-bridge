@@ -21,7 +21,7 @@ class ACPBot(commands.Bot):
         self,
         config: Config,
         project_service: ProjectService,
-        session_service: SessionService,
+        session_service: SessionService | None,
     ) -> None:
         """
         Initialize ACPBot.
@@ -29,7 +29,7 @@ class ACPBot(commands.Bot):
         Args:
             config: アプリケーション設定
             project_service: プロジェクト管理サービス
-            session_service: セッション管理サービス
+            session_service: セッション管理サービス（後から設定可能）
         """
         # Intentsの設定（必要最小限）
         intents = Intents.default()
@@ -44,7 +44,8 @@ class ACPBot(commands.Bot):
 
         self.config = config
         self.project_service = project_service
-        self.session_service = session_service
+        # session_serviceは後から設定される場合があるが、実行時には必ず設定される
+        self.session_service: SessionService = session_service  # type: ignore[assignment]
 
     async def send_message_to_thread(self, thread_id: int, content: str) -> None:
         """

@@ -678,6 +678,42 @@ class SessionService:
 
         logger.warning("Session killed", session_id=session_id)
 
+    async def close_all_sessions(self) -> None:
+        """
+        すべてのアクティブセッションを正常終了する.
+
+        アプリケーション終了時に呼び出される。
+        """
+        logger.info("Closing all active sessions...")
+
+        # アクティブセッションのリストを取得（イテレート中の変更を避けるためコピー）
+        active_sessions = [
+            session for session in self._sessions.values() if session.is_active()
+        ]
+
+        if not active_sessions:
+            logger.info("No active sessions to close")
+            return
+
+        logger.info("Closing %d active session(s)", len(active_sessions))
+
+        # すべてのセッションを並列にクローズ
+        close_tasks = [self.close_session(session.id) for session in active_sessions]
+
+        # すべての終了処理を待機（エラーが発生しても続行）
+        results = await asyncio.gather(*close_tasks, return_exceptions=True)
+
+        # エラーをログに記録
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Error closing session",
+                    session_id=active_sessions[i].id,
+                    error=str(result),
+                )
+
+        logger.info("All sessions closed")
+
     def _get_session_by_id(self, session_id: str) -> Session | None:
         """
         セッションIDからセッションを検索する.

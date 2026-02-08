@@ -24,6 +24,10 @@ async def main() -> None:
 
     logger.info("Starting Discord ACP Bridge...")
 
+    # サービス変数をスコープ外で宣言（finally句でアクセスするため）
+    session_service = None
+    bot = None
+
     try:
         logger.info("Configuration loaded")
 
@@ -34,7 +38,7 @@ async def main() -> None:
         bot = ACPBot(
             config=config,
             project_service=project_service,
-            session_service=None,  # type: ignore[arg-type]
+            session_service=None,
         )
 
         # SessionServiceを初期化（コールバックを渡す）
@@ -52,13 +56,27 @@ async def main() -> None:
 
         # Botを起動
         async with bot:
-            await bot.start(config.discord_bot_token)
+            try:
+                await bot.start(config.discord_bot_token)
+            except KeyboardInterrupt:
+                logger.info("Received keyboard interrupt, shutting down gracefully...")
+                # Botがクローズされる前にセッションをクローズ（Discord通知のため）
+                if session_service is not None:
+                    try:
+                        await session_service.close_all_sessions()
+                    except Exception:
+                        logger.critical("Error during session cleanup", exc_info=True)
+                # KeyboardInterruptを再raiseして、async withブロックを抜ける
+                raise
 
     except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down...")
+        # async withブロック内から再raiseされたKeyboardInterruptをキャッチ
+        pass  # すでにログ出力とクリーンアップ済み
     except Exception:
         logger.exception("Fatal error occurred")
         sys.exit(1)
+    finally:
+        logger.info("Shutdown complete")
 
 
 if __name__ == "__main__":
