@@ -21,6 +21,9 @@ def mock_bot() -> MagicMock:
     bot = MagicMock()
     bot.config.discord_allowed_user_id = 123456789
     bot.session_service = MagicMock()
+    # タイピングインジケーター関連のメソッドをAsyncMockに設定
+    bot.session_service.start_typing_for_thread = AsyncMock()
+    bot.session_service.stop_typing_for_thread = AsyncMock()
     return bot
 
 

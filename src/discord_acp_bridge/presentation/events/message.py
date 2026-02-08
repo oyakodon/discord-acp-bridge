@@ -86,6 +86,8 @@ class MessageEventHandler(commands.Cog):
 
             except SessionStateError as e:
                 logger.exception("Session state error")
+                # エラー時はタイピングインジケーターを停止
+                await self.bot.session_service.stop_typing_for_thread(thread.id)
                 await thread.send(
                     f"⚠️ セッションの状態が不正です: {e}\n"
                     f"`/agent status` で状態を確認してください。"
@@ -93,6 +95,8 @@ class MessageEventHandler(commands.Cog):
 
             except Exception:
                 logger.exception("Error sending debounced prompt to session")
+                # エラー時はタイピングインジケーターを停止
+                await self.bot.session_service.stop_typing_for_thread(thread.id)
                 await thread.send("❌ エラーが発生しました。ログを確認してください。")
 
         except asyncio.CancelledError:
@@ -160,6 +164,22 @@ class MessageEventHandler(commands.Cog):
             self._debounce_states[debounce_key] = DebounceState()
 
         state = self._debounce_states[debounce_key]
+
+        # 最初のメッセージの場合、タイピングインジケーターを開始
+        if not state.messages:  # バッファが空 = 最初のメッセージ
+            try:
+                logger.debug(
+                    "Starting typing indicator for thread %d", message.channel.id
+                )
+                await self.bot.session_service.start_typing_for_thread(
+                    message.channel.id
+                )
+            except Exception:
+                logger.exception(
+                    "Error starting typing indicator for thread",
+                    thread_id=message.channel.id,
+                )
+                # タイピング表示の失敗は致命的ではないため、処理は継続
 
         # 既存のタスクがあればキャンセル
         if state.task is not None and not state.task.done():

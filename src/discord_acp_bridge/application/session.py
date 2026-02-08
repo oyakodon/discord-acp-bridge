@@ -337,6 +337,9 @@ class SessionService:
                     thread_id=thread_id,
                 )
 
+        # 状態マップから削除
+        del self._typing_active[thread_id]
+
     def _schedule_typing_stop(self, thread_id: int, delay: float = 2.0) -> None:
         """
         タイピングインジケーター停止をスケジュールする.
@@ -360,7 +363,9 @@ class SessionService:
         async def delayed_stop() -> None:
             try:
                 await asyncio.sleep(delay)
-                await self._stop_typing(thread_id)
+                # 停止タスクがキャンセルされずにここまで来た場合のみ停止
+                if self._typing_active.get(thread_id, False):
+                    await self._stop_typing(thread_id)
             except asyncio.CancelledError:
                 # キャンセルは正常な動作
                 pass
@@ -370,6 +375,28 @@ class SessionService:
                 )
 
         self._typing_stop_tasks[thread_id] = asyncio.create_task(delayed_stop())
+
+    async def start_typing_for_thread(self, thread_id: int) -> None:
+        """
+        指定されたスレッドでタイピングインジケーターを開始する.
+
+        メッセージ受信時など、外部から明示的にタイピング表示を開始する際に使用する。
+
+        Args:
+            thread_id: DiscordスレッドID
+        """
+        await self._start_typing(thread_id)
+
+    async def stop_typing_for_thread(self, thread_id: int) -> None:
+        """
+        指定されたスレッドでタイピングインジケーターを停止する.
+
+        エラー時など、外部から明示的にタイピング表示を停止する際に使用する。
+
+        Args:
+            thread_id: DiscordスレッドID
+        """
+        await self._stop_typing(thread_id)
 
     async def send_prompt(self, session_id: str, content: str) -> None:
         """
