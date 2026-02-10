@@ -19,7 +19,7 @@ def configure_logging(
     構造化ロギングを設定する.
 
     3つの出力先にログを配信する:
-    - コンソール (stderr): ERROR以上
+    - コンソール: INFO以上
     - logs/latest.log: 全レベル (DEBUG〜)
     - logs/error.log: WARNING以上
 
@@ -74,9 +74,9 @@ def configure_logging(
     # 既存のハンドラーをクリア
     root_logger.handlers.clear()
 
-    # 1. コンソールハンドラー (stderr, ERROR以上)
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.ERROR)
+    # 1. コンソールハンドラー (INFO以上)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(json_formatter)
     root_logger.addHandler(console_handler)
 

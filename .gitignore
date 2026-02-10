@@ -222,6 +222,6 @@ __marimo__/
 logs/
 
 # Claude Code
-.claude/
-
-
+.claude/*
+!.claude/agents/
+!.claude/skills/
