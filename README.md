@@ -52,6 +52,12 @@ LOG_LEVEL=INFO
 LOG_DIR=logs
 ```
 
+> **Windows の場合:** npm でインストールされた `claude-code-acp` は `.cmd` スクリプトとして提供されるため、`AGENT_COMMAND` を以下のように設定してください。
+>
+> ```env
+> AGENT_COMMAND=["cmd", "/c", "claude-code-acp"]
+> ```
+
 **ユーザー ID / ギルド ID の確認方法**: Discord の設定 → 詳細設定 → 開発者モードを有効にし、対象を右クリック → ID をコピー
 
 設定項目の詳細は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照。
