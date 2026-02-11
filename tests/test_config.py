@@ -14,6 +14,7 @@ def test_config_default_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISCORD_GUILD_ID", "123456789")
     monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
     # 環境変数のデフォルト値を明示的に設定（.envファイルの値も上書きされる）
+    monkeypatch.setenv("AGENT_COMMAND", '["claude-code-acp"]')
     monkeypatch.setenv("TRUSTED_PATHS", "[]")
 
     config = Config()
@@ -23,6 +24,7 @@ def test_config_default_values(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.discord_allowed_user_id == 987654321
     assert config.agent_command == ["claude-code-acp"]
     assert config.trusted_paths == []
+    assert config.default_project_mode == "read"
 
 
 def test_config_custom_agent_command_list(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,14 @@ logger = get_logger(__name__)
 
 _AUTO_APPROVE_DIR = ".acp-bridge"
 _AUTO_APPROVE_FILE = "auto_approve.json"
+_CONFIG_FILE = "config.json"
+
+
+class ProjectMode(str, Enum):
+    """プロジェクトの権限モード."""
+
+    READ = "read"
+    RW = "rw"
 
 
 class Project(BaseModel):
@@ -224,6 +233,90 @@ class ProjectService:
         project_id = all_paths.index(str(project_path)) + 1
 
         return Project(id=project_id, path=str(project_path))
+
+    def _config_path(self, project: Project) -> Path:
+        """プロジェクトの設定ファイルパスを返す."""
+        return Path(project.path) / _AUTO_APPROVE_DIR / _CONFIG_FILE
+
+    def _load_project_config(self, project: Project) -> dict[str, object]:
+        """プロジェクト設定ファイルを読み込む."""
+        path = self._config_path(project)
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            logger.warning(
+                "Failed to read config.json", path=str(path), exc_info=True
+            )
+        return {}
+
+    def _save_project_config(
+        self, project: Project, config: dict[str, object]
+    ) -> None:
+        """プロジェクト設定ファイルを保存する."""
+        path = self._config_path(project)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            logger.exception("Failed to write config.json", path=str(path))
+            raise
+
+    def get_project_mode(self, project: Project) -> ProjectMode:
+        """
+        プロジェクトの権限モードを取得する.
+
+        Args:
+            project: 対象プロジェクト
+
+        Returns:
+            プロジェクトの権限モード（未設定の場合はデフォルトモード）
+        """
+        if not self._is_path_trusted(Path(project.path)):
+            logger.error(
+                "SECURITY: Attempted to read config outside trusted paths",
+                project_path=project.path,
+            )
+            return ProjectMode(self._config.default_project_mode)
+        config = self._load_project_config(project)
+        mode_str = config.get("mode")
+        try:
+            return ProjectMode(mode_str)
+        except ValueError:
+            return ProjectMode(self._config.default_project_mode)
+
+    def set_project_mode(self, project: Project, mode: ProjectMode) -> None:
+        """
+        プロジェクトの権限モードを設定する.
+
+        Args:
+            project: 対象プロジェクト
+            mode: 設定する権限モード
+
+        Raises:
+            ValueError: project.path が Trusted Path 配下にない場合
+            OSError: ファイルへの書き込みに失敗した場合
+        """
+        if not self._is_path_trusted(Path(project.path)):
+            logger.error(
+                "SECURITY: Attempted to write config outside trusted paths",
+                project_path=project.path,
+            )
+            msg = f"Project path is not within trusted paths: {project.path}"
+            raise ValueError(msg)
+        config = self._load_project_config(project)
+        config["mode"] = mode.value
+        self._save_project_config(project, config)
+        logger.info(
+            "Set project mode",
+            project_path=project.path,
+            mode=mode.value,
+        )
 
     def _auto_approve_path(self, project: Project) -> Path:
         """プロジェクトの Auto Approve 設定ファイルパスを返す."""

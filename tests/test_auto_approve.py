@@ -47,6 +47,7 @@ def config(temp_trusted_root: Path) -> Config:
         discord_guild_id=123456789,
         discord_allowed_user_id=987654321,
         trusted_paths=[str(temp_trusted_root)],
+        default_project_mode="rw",  # Auto Approve テストは読み書きモードで実行
     )
 
 

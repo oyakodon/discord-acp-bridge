@@ -49,6 +49,12 @@ class Config(BaseSettings):
         description="パーミッション要求のタイムアウト秒数（0で自動承認）",
     )
 
+    # プロジェクト設定
+    default_project_mode: str = Field(
+        default="read",
+        description="プロジェクトのデフォルト権限モード (read: 読み取り専用, rw: 読み書き)",
+    )
+
     # ロギング設定
     log_level: str = Field(
         default="INFO",
@@ -89,6 +95,16 @@ class Config(BaseSettings):
                 return [v]
             except json.JSONDecodeError:
                 return [v]
+        return v
+
+    @field_validator("default_project_mode")
+    @classmethod
+    def validate_default_project_mode(cls, v: str) -> str:
+        """default_project_modeのバリデーション."""
+        valid_modes = {"read", "rw"}
+        if v not in valid_modes:
+            msg = f"DEFAULT_PROJECT_MODE は 'read' または 'rw' を指定してください。got: {v!r}"
+            raise ValueError(msg)
         return v
 
 
