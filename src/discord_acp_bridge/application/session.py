@@ -1056,7 +1056,9 @@ class SessionService:
             )
 
         # プロジェクトの Auto Approve パターンをチェック
-        # パターンは表示用（500文字切り詰め）で構築されているため、マッチングも同様に切り詰めた文字列を使用する
+        # 既存パターンの多くは表示用に 500 文字へ切り詰めた raw_input を元に構築されているため、
+        # ここでのマッチングも同じく切り詰め済み文字列を使用する（`{kind}:*` のようなワイルドカードパターンは
+        # raw_input の内容に依存しない）
         raw_input_str = _format_raw_input(tool_call.raw_input)
         if not bypass_auto_approve and self._project_service is not None:
             kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
@@ -1288,7 +1290,14 @@ def _resolve_tool_kind(kind: str | None, title: str | None) -> str:
     if kind:
         return kind
     if title:
-        return re.sub(r"\s+", "_", title.strip().lower())
+        # タイトルから推測する場合はコロン以降を捨て、[a-z0-9_]+ に正規化する
+        # 例: "Bash: echo hello" → "bash"、"Write File" → "write_file"
+        base = title.split(":", 1)[0].strip().lower()
+        if not base:
+            return "unknown"
+        normalized = re.sub(r"\s+", "_", base)
+        normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+        return normalized or "unknown"
     return "unknown"
 
 

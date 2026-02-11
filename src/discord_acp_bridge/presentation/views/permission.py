@@ -131,8 +131,10 @@ class PermissionView(discord.ui.View):
         )
         # Auto Approve パターンを構築: {kind}:* (ワイルドカード)
         # raw_input は巨大になり得るためワイルドカードで保存する
+        # kind に ':' が含まれるとパターン解釈と衝突するため安全な形式に正規化する
         tool = self._request.tool_call
-        pattern = f"{tool.kind}:*"
+        safe_kind = tool.kind.replace(":", "_")
+        pattern = f"{safe_kind}:*"
         self._resolve(
             PermissionResponse(
                 approved=True, option_id=option_id, auto_approve_pattern=pattern

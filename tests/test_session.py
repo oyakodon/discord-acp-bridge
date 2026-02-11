@@ -928,3 +928,16 @@ class TestResolveToolKind:
     def test_kind_none_title_with_leading_trailing_spaces(self) -> None:
         """title の前後の空白はトリムされる."""
         assert _resolve_tool_kind(None, "  Edit  ") == "edit"
+
+    def test_kind_none_title_with_colon_strips_after_colon(self) -> None:
+        """title にコロンが含まれる場合、コロン以降を捨てて前半部分のみ使用する."""
+        # "Bash: echo hello" → "bash"（コロン以降を破棄）
+        assert _resolve_tool_kind(None, "Bash: echo hello") == "bash"
+
+    def test_kind_none_title_colon_prefix_only(self) -> None:
+        """コロン以前が空の場合は 'unknown' を返す."""
+        assert _resolve_tool_kind(None, ": something") == "unknown"
+
+    def test_kind_none_title_sanitizes_special_chars(self) -> None:
+        """title に [a-z0-9_] 以外の文字が含まれる場合は除去する."""
+        assert _resolve_tool_kind(None, "Read-File") == "readfile"
