@@ -58,7 +58,7 @@ def mock_session() -> Session:
 
     from discord_acp_bridge.application.project import Project
 
-    project = Project(id=1, path=str(Path("/test/project")), is_active=True)
+    project = Project(id=1, path=str(Path("/test/project")))
     session = Session(user_id=123456789, project=project, state=SessionState.ACTIVE)
     session.thread_id = 987654321
     return session

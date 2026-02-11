@@ -129,7 +129,14 @@ class PermissionView(discord.ui.View):
         option_id = self._find_option_id("allow_always") or self._find_option_id(
             "allow_once"
         )
-        self._resolve(PermissionResponse(approved=True, option_id=option_id))
+        # Auto Approve パターンを構築: {kind}:{raw_input}
+        tool = self._request.tool_call
+        pattern = f"{tool.kind}:{tool.raw_input}" if tool.raw_input else tool.kind
+        self._resolve(
+            PermissionResponse(
+                approved=True, option_id=option_id, auto_approve_pattern=pattern
+            )
+        )
         self.stop()
         await interaction.response.edit_message(
             content="✅ 常に承認しました。", view=None

@@ -84,7 +84,7 @@ ACP 公式 SDK が提供されている言語（TypeScript, Python, Rust, Kotlin
 |---------------|---------|------|
 | ACPBot | `presentation/bot.py` | Gateway 接続、イベントディスパッチ、メッセージ送信 |
 | Agent Commands | `presentation/commands/agent.py` | `/agent` コマンド群（start, stop, kill, status, model, usage） |
-| Project Commands | `presentation/commands/project.py` | `/projects` コマンド群（list, new） |
+| Project Commands | `presentation/commands/project.py` | `/projects` コマンド群（list, new）|
 | Message Handler | `presentation/events/message.py` | スレッド内メッセージの受信と Debounce 処理 |
 | Permission View | `presentation/views/permission.py` | パーミッション要求の Embed + ボタン UI |
 | Session Service | `application/session.py` | セッションライフサイクル管理、プロンプト送受信、バッファリング |
@@ -289,9 +289,16 @@ sequenceDiagram
 | ボタン | 動作 | 優先 option |
 |--------|------|-------------|
 | 承認 | 1 回承認 | `allow_once` → `allow_always` |
-| 常に承認 | 常に承認 | `allow_always` → `allow_once` |
+| 常に承認 | 常に承認 + Auto Approve パターン保存 | `allow_always` → `allow_once` |
 | 拒否 | 拒否 | - |
 | 拒否+指示 | モーダル表示 → 指示を入力 → 拒否 + エージェントに指示送信 | - |
+
+### Auto Approve
+
+Discord UI の「常に承認」ボタンを押すと、そのツール呼び出しのパターン（`{kind}:{raw_input}`）が `{project}/.acp-bridge/auto_approve.json` に自動保存される。以降の同一パターンの呼び出しは Discord UI を経由せず自動承認される。
+
+- パターンの削除は `auto_approve.json` を直接編集する
+- `.acp-bridge/` ディレクトリ自体への操作は、Auto Approve パターンにマッチしても必ず Discord UI でユーザーに確認を求める（設定改竄の防止）
 
 ## 8. 設定
 

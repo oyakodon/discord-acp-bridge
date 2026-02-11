@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -27,7 +28,10 @@ from discord_acp_bridge.application.models import (
     PermissionRequest,  # noqa: TC001
     PermissionResponse,  # noqa: TC001
 )
-from discord_acp_bridge.application.project import Project  # noqa: TC001
+from discord_acp_bridge.application.project import (
+    Project,  # noqa: TC001
+    ProjectService,  # noqa: TC001
+)
 from discord_acp_bridge.infrastructure.acp_client import ACPClient, UsageUpdate
 from discord_acp_bridge.infrastructure.logging import get_logger
 
@@ -169,6 +173,7 @@ class SessionService:
     def __init__(
         self,
         config: Config,
+        project_service: ProjectService | None = None,
         on_message: MessageCallback | None = None,
         on_timeout: TimeoutCallback | None = None,
         on_typing: TypingCallback | None = None,
@@ -179,12 +184,14 @@ class SessionService:
 
         Args:
             config: アプリケーション設定
+            project_service: プロジェクト管理サービス（Auto Approve チェックに使用）
             on_message: ACPからのメッセージ受信時のコールバック
             on_timeout: セッションタイムアウト時のコールバック
             on_typing: タイピングインジケーター制御時のコールバック
             on_permission_request: パーミッション要求時のコールバック
         """
         self._config = config
+        self._project_service = project_service
         self._on_message_callback = on_message
         self._on_timeout_callback = on_timeout
         self._on_typing_callback = on_typing
@@ -1036,6 +1043,35 @@ class SessionService:
             )
             return self._auto_approve_permission(options)
 
+        # .acp-bridge/ ディレクトリへの操作は Auto Approve をバイパスし、
+        # 必ず Discord UI でユーザーに確認を求める
+        # セキュリティ上重要なチェックのため、切り詰めなしの全文字列で検査する
+        full_raw_input_str = _raw_input_to_full_str(tool_call.raw_input)
+        bypass_auto_approve = _targets_acp_bridge_dir(full_raw_input_str)
+        if bypass_auto_approve:
+            logger.info(
+                "Bypassing auto-approve for .acp-bridge/ target",
+                session_id=session.id,
+                raw_input=full_raw_input_str[:100],
+            )
+
+        # プロジェクトの Auto Approve パターンをチェック
+        # パターンは表示用（500文字切り詰め）で構築されているため、マッチングも同様に切り詰めた文字列を使用する
+        raw_input_str = _format_raw_input(tool_call.raw_input)
+        if not bypass_auto_approve and self._project_service is not None:
+            kind = tool_call.kind or ""
+            matched_pattern = self._project_service.is_auto_approved(
+                session.project, kind, raw_input_str
+            )
+            if matched_pattern is not None:
+                logger.info(
+                    "Auto-approved permission request by project pattern",
+                    session_id=session.id,
+                    kind=kind,
+                    matched_pattern=matched_pattern,
+                )
+                return self._auto_approve_permission(options)
+
         # ACP型 → 中間型に変換
         perm_request = PermissionRequest(
             session_id=session.id,
@@ -1100,6 +1136,29 @@ class SessionService:
                     session.id, perm_response.instructions
                 )
 
+        # 「常に承認」によるパターン保存
+        # .acp-bridge/ を対象とする操作は保存しても効果がないのでスキップ
+        if (
+            perm_response.auto_approve_pattern
+            and self._project_service is not None
+            and not bypass_auto_approve
+        ):
+            try:
+                self._project_service.add_auto_approve_pattern(
+                    session.project, perm_response.auto_approve_pattern
+                )
+                logger.info(
+                    "Saved auto-approve pattern from UI",
+                    session_id=session.id,
+                    pattern=perm_response.auto_approve_pattern,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to save auto-approve pattern (non-blocking)",
+                    session_id=session.id,
+                    pattern=perm_response.auto_approve_pattern,
+                )
+
         return _RPR(outcome=outcome)
 
     def _find_session_by_acp_id(self, acp_session_id: str) -> Session | None:
@@ -1151,6 +1210,45 @@ class SessionService:
                 )
 
         task.add_done_callback(_handle_task_exception)
+
+
+# パス区切り文字（/ または \）、空白、引用符の前後に .acp-bridge が現れるパターン
+# 末尾スラッシュなし（ディレクトリ自体への操作）も検出する
+# 例: "rm -rf .acp-bridge"、'cat ".acp-bridge/auto_approve.json"'
+_ACP_BRIDGE_PATH_PATTERN = re.compile(r"(^|[/\\\s\"'])\.acp-bridge([/\\\s\"']|$)")
+
+
+def _targets_acp_bridge_dir(raw_input: str) -> bool:
+    r"""raw_input が .acp-bridge ディレクトリを対象としているか判定する.
+
+    パス区切り文字（/・\）、空白、引用符の前後に .acp-bridge が現れるかをチェックする。
+    末尾スラッシュなし（ディレクトリ自体の操作）や bash コマンド内のパスも検出対象とする。
+
+    Args:
+        raw_input: ツール呼び出しの入力文字列
+
+    Returns:
+        .acp-bridge を対象としている場合 True
+    """
+    return bool(_ACP_BRIDGE_PATH_PATTERN.search(raw_input))
+
+
+def _raw_input_to_full_str(raw_input: object) -> str:
+    """ToolCallUpdate.raw_input を切り詰めなしで文字列に変換する（セキュリティ検査用）.
+
+    セキュリティ上重要なチェック（.acp-bridge/ バイパス等）に使用する。
+    表示・パターンマッチング目的には _format_raw_input を使用すること。
+    """
+    if raw_input is None:
+        return ""
+    if isinstance(raw_input, str):
+        return raw_input
+    import json
+
+    try:
+        return json.dumps(raw_input, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(raw_input)
 
 
 def _format_raw_input(raw_input: object) -> str:

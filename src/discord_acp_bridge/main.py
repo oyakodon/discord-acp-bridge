@@ -71,6 +71,7 @@ async def main() -> None:
         # SessionServiceを初期化（コールバックを渡す）
         session_service = SessionService(
             config,
+            project_service=project_service,
             on_message=bot.send_message_to_thread,
             on_timeout=bot.send_timeout_notification,
             on_typing=bot.set_typing_indicator,
