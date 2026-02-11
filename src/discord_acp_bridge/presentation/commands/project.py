@@ -8,7 +8,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from discord_acp_bridge.application.project import ProjectCreationError
+from discord_acp_bridge.application.project import (
+    ProjectCreationError,
+    ProjectMode,
+    ProjectNotFoundError,
+)
 from discord_acp_bridge.infrastructure.logging import get_logger
 from discord_acp_bridge.presentation.bot import is_allowed_user
 
@@ -63,7 +67,10 @@ class ProjectCommands(commands.Cog):
 
             # プロジェクト一覧を整形
             lines = ["**登録済みプロジェクト:**"]
-            lines.extend(f"{project.id}. `{project.path}`" for project in projects)
+            for project in projects:
+                mode = self.bot.project_service.get_project_mode(project)
+                mode_label = "🔒 read" if mode == ProjectMode.READ else "✏️ rw"
+                lines.append(f"{project.id}. `{project.path}` [{mode_label}]")
 
             message = "\n".join(lines)
             await interaction.response.send_message(message, ephemeral=True)
@@ -126,6 +133,82 @@ class ProjectCommands(commands.Cog):
 
         except Exception:
             logger.exception("Unexpected error creating project")
+            await interaction.response.send_message(
+                "エラーが発生しました。ログを確認してください。", ephemeral=True
+            )
+
+    @projects_group.command(
+        name="mode", description="プロジェクトの権限モードを変更"
+    )
+    @app_commands.describe(
+        project_id="プロジェクトID",
+        mode="権限モード (read: 読み取り専用, rw: 読み書き)",
+    )
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="read (読み取り専用)", value="read"),
+            app_commands.Choice(name="rw (読み書き)", value="rw"),
+        ]
+    )
+    @is_allowed_user()
+    async def set_project_mode(
+        self,
+        interaction: discord.Interaction,
+        project_id: int,
+        mode: str,
+    ) -> None:
+        """
+        プロジェクトの権限モードを変更する.
+
+        Args:
+            interaction: Discord Interaction
+            project_id: プロジェクトID
+            mode: 設定する権限モード ("read" or "rw")
+        """
+        logger.info(
+            "User requested to change project mode",
+            user_name=interaction.user.name,
+            user_id=interaction.user.id,
+            project_id=project_id,
+            mode=mode,
+        )
+
+        try:
+            project = self.bot.project_service.get_project_by_id(project_id)
+            project_mode = ProjectMode(mode)
+            self.bot.project_service.set_project_mode(project, project_mode)
+
+            mode_label = "🔒 読み取り専用 (read)" if project_mode == ProjectMode.READ else "✏️ 読み書き (rw)"
+            await interaction.response.send_message(
+                f"プロジェクト #{project_id} の権限モードを変更しました。\n"
+                f"**パス:** `{project.path}`\n"
+                f"**モード:** {mode_label}",
+                ephemeral=True,
+            )
+
+            logger.info(
+                "Changed project mode",
+                project_id=project_id,
+                project_path=project.path,
+                mode=mode,
+            )
+
+        except ProjectNotFoundError:
+            await interaction.response.send_message(
+                f"プロジェクト #{project_id} が見つかりません。"
+                "`/projects list` でプロジェクト一覧を確認してください。",
+                ephemeral=True,
+            )
+
+        except OSError as e:
+            logger.exception("Error writing project config")
+            await interaction.response.send_message(
+                f"設定ファイルへの書き込みに失敗しました: {e}",
+                ephemeral=True,
+            )
+
+        except Exception:
+            logger.exception("Unexpected error changing project mode")
             await interaction.response.send_message(
                 "エラーが発生しました。ログを確認してください。", ephemeral=True
             )

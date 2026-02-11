@@ -9,6 +9,7 @@ import pytest
 from discord_acp_bridge.application.project import (
     Project,
     ProjectCreationError,
+    ProjectMode,
     ProjectNotFoundError,
     ProjectService,
 )
@@ -361,6 +362,140 @@ class TestCreateProject:
 
         with pytest.raises(ProjectCreationError, match="Trusted Pathが存在しません"):
             service.create_project("new_project")
+
+
+class TestProjectMode:
+    """ProjectMode (権限モード) のテスト."""
+
+    def test_get_project_mode_default_read(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """設定なしのデフォルトモードは read であることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+        mode = service.get_project_mode(project)
+        assert mode == ProjectMode.READ
+
+    def test_get_project_mode_default_rw_when_configured(
+        self,
+        temp_trusted_root: Path,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """default_project_mode=rw の場合は rw が返ることを確認する."""
+        config = Config(
+            discord_bot_token="test_token",
+            discord_guild_id=123456789,
+            discord_allowed_user_id=987654321,
+            trusted_paths=[str(temp_trusted_root)],
+            default_project_mode="rw",
+        )
+        service = ProjectService(config)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+        mode = service.get_project_mode(project)
+        assert mode == ProjectMode.RW
+
+    def test_set_and_get_project_mode_read(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """set_project_mode で read モードを設定できることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+
+        service.set_project_mode(project, ProjectMode.READ)
+        mode = service.get_project_mode(project)
+        assert mode == ProjectMode.READ
+
+    def test_set_and_get_project_mode_rw(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """set_project_mode で rw モードを設定できることを確認する."""
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+
+        # まず read に設定してから、rw に変更する
+        service.set_project_mode(project, ProjectMode.READ)
+        service.set_project_mode(project, ProjectMode.RW)
+        mode = service.get_project_mode(project)
+        assert mode == ProjectMode.RW
+
+    def test_set_project_mode_creates_config_file(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """set_project_mode が config.json を作成することを確認する."""
+        import json
+
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+
+        service.set_project_mode(project, ProjectMode.READ)
+
+        config_file = temp_project_dirs[0] / ".acp-bridge" / "config.json"
+        assert config_file.exists()
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+        assert data["mode"] == "read"
+
+    def test_set_project_mode_preserves_existing_config(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """既存の config.json に他のキーがある場合に保持されることを確認する."""
+        import json
+
+        config_dir = temp_project_dirs[0] / ".acp-bridge"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.json"
+        config_file.write_text(
+            json.dumps({"other_key": "other_value"}), encoding="utf-8"
+        )
+
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+
+        service.set_project_mode(project, ProjectMode.READ)
+
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+        assert data["mode"] == "read"
+        assert data["other_key"] == "other_value"
+
+    def test_get_project_mode_invalid_value_returns_default(
+        self,
+        config_with_trusted_paths: Config,
+        temp_project_dirs: list[Path],
+    ) -> None:
+        """config.json に不正な mode 値がある場合はデフォルトを返すことを確認する."""
+        import json
+
+        config_dir = temp_project_dirs[0] / ".acp-bridge"
+        config_dir.mkdir(parents=True)
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps({"mode": "invalid_mode"}), encoding="utf-8")
+
+        service = ProjectService(config_with_trusted_paths)
+        project = Project(id=1, path=str(temp_project_dirs[0]))
+
+        mode = service.get_project_mode(project)
+        assert mode == ProjectMode.READ  # デフォルトは read
+
+    def test_set_project_mode_untrusted_path(
+        self,
+        config_empty: Config,
+        tmp_path: Path,
+    ) -> None:
+        """Trusted Path 外のプロジェクトへの mode 設定が拒否されることを確認する."""
+        service = ProjectService(config_empty)
+        project = Project(id=1, path=str(tmp_path / "untrusted_project"))
+
+        with pytest.raises(ValueError, match="not within trusted paths"):
+            service.set_project_mode(project, ProjectMode.READ)
 
 
 class TestProjectCreationError:

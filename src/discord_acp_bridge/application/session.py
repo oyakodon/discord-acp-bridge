@@ -30,6 +30,7 @@ from discord_acp_bridge.application.models import (
 )
 from discord_acp_bridge.application.project import (
     Project,  # noqa: TC001
+    ProjectMode,  # noqa: TC001
     ProjectService,  # noqa: TC001
 )
 from discord_acp_bridge.infrastructure.acp_client import ACPClient, UsageUpdate
@@ -74,6 +75,39 @@ ACPUpdate = (
     | SessionInfoUpdate
     | UsageUpdate
 )
+
+# Read モード時に拒否する Write 系ツール種別のセット
+# bash はファイル変更・実行など任意の副作用を伴うため Write 系として扱う
+_WRITE_KINDS: frozenset[str] = frozenset({
+    "bash",
+    "write",
+    "write_file",
+    "edit",
+    "edit_file",
+    "create",
+    "create_file",
+    "delete",
+    "delete_file",
+    "notebookedit",
+    "notebook_edit",
+    "todowrite",
+    "todo_write",
+    "run",
+    "execute",
+    "computer_use",
+})
+
+
+def _is_write_operation(kind: str) -> bool:
+    """ツール種別が Write 系（ファイル変更・実行など）かどうかを判定する.
+
+    Args:
+        kind: ツール種別（_resolve_tool_kind で解決済みの小文字スラッグ）
+
+    Returns:
+        Write 系の場合 True
+    """
+    return kind.lower() in _WRITE_KINDS
 
 
 class Session(BaseModel):
@@ -1027,6 +1061,23 @@ class SessionService:
             ToolCallInfo,
         )
 
+        # セッションを先に検索（read モードチェックを early return より前に行うため）
+        session = self._find_session_by_acp_id(acp_session_id)
+        raw_input_str = _format_raw_input(tool_call.raw_input)
+        kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
+
+        # プロジェクトの権限モードチェック（read モード時は Write 系を自動拒否）
+        # permission_timeout=0 やコールバックなしの場合でも read モードを優先させる
+        if session is not None and self._project_service is not None:
+            mode = self._project_service.get_project_mode(session.project)
+            if mode == ProjectMode.READ and _is_write_operation(kind):
+                logger.info(
+                    "Auto-denied write operation due to read-only project mode",
+                    session_id=session.id,
+                    kind=kind,
+                )
+                return _RPR(outcome=DeniedOutcome(outcome="cancelled"))
+
         # 自動承認: コールバックなし or timeout=0
         if (
             self._on_permission_request_callback is None
@@ -1034,8 +1085,7 @@ class SessionService:
         ):
             return self._auto_approve_permission(options)
 
-        # セッションを検索
-        session = self._find_session_by_acp_id(acp_session_id)
+        # セッション/スレッドが見つからない場合は自動承認
         if session is None or session.thread_id is None:
             logger.warning(
                 "No session/thread for permission request, auto-approving",
@@ -1059,9 +1109,7 @@ class SessionService:
         # 既存パターンの多くは表示用に 500 文字へ切り詰めた raw_input を元に構築されているため、
         # ここでのマッチングも同じく切り詰め済み文字列を使用する（`{kind}:*` のようなワイルドカードパターンは
         # raw_input の内容に依存しない）
-        raw_input_str = _format_raw_input(tool_call.raw_input)
         if not bypass_auto_approve and self._project_service is not None:
-            kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
             matched_pattern = self._project_service.is_auto_approved(
                 session.project, kind, raw_input_str
             )
@@ -1082,8 +1130,8 @@ class SessionService:
             tool_call=ToolCallInfo(
                 tool_call_id=tool_call.tool_call_id,
                 title=tool_call.title or "Unknown",
-                kind=_resolve_tool_kind(tool_call.kind, tool_call.title),
-                raw_input=_format_raw_input(tool_call.raw_input),
+                kind=kind,
+                raw_input=raw_input_str,
                 content_summary=_format_content_summary(tool_call.content),
             ),
             options=[

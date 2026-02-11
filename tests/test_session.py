@@ -941,3 +941,257 @@ class TestResolveToolKind:
     def test_kind_none_title_sanitizes_special_chars(self) -> None:
         """title に [a-z0-9_] 以外の文字が含まれる場合は除去する."""
         assert _resolve_tool_kind(None, "Read-File") == "readfile"
+
+
+class TestReadModePermission:
+    """Read モード時のパーミッション処理テスト."""
+
+    @pytest.mark.asyncio
+    async def test_read_mode_denies_write_operation(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """read モード時は Write 系ツールが自動拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        callback = AsyncMock()
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "echo hello"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # コールバックは呼ばれない（自動拒否）
+        callback.assert_not_called()
+        # 拒否（cancelled）
+        assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_allows_read_operation(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """read モード時は Read 系ツールが Discord UI に委譲されることを確認する."""
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+        project_service.is_auto_approved.return_value = None
+
+        async def perm_callback(request: PermissionRequest) -> PermissionResponse:
+            return PermissionResponse(approved=True, option_id="opt-1")
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Read"
+        tool_call.kind = "read"
+        tool_call.raw_input = "/path/to/file.txt"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # コールバックが呼ばれる（read 系は拒否されない）
+        callback.assert_awaited_once()
+        assert result.outcome.outcome == "selected"
+
+    @pytest.mark.asyncio
+    async def test_rw_mode_allows_write_operation(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """rw モード時は Write 系ツールが Discord UI に委譲されることを確認する."""
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.RW
+        project_service.is_auto_approved.return_value = None
+
+        async def perm_callback(request: PermissionRequest) -> PermissionResponse:
+            return PermissionResponse(approved=True, option_id="opt-1")
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "rm -rf /tmp/test"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # rw モードでは Write 系も Discord UI に委譲される
+        callback.assert_awaited_once()
+        assert result.outcome.outcome == "selected"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_write_denies_write_file(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """read モード時は write_file 種別も拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        callback = AsyncMock()
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Write File"
+        tool_call.kind = "write_file"
+        tool_call.raw_input = '{"path": "/tmp/test.txt"}'
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        callback.assert_not_called()
+        assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_denies_write_even_with_timeout_zero(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """permission_timeout=0 でも read モード時は Write 系が拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        config.permission_timeout = 0
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        callback = AsyncMock()
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "rm -rf /important"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # permission_timeout=0 でも read モードが優先されて拒否される
+        callback.assert_not_called()
+        assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_denies_write_even_without_callback(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """コールバックなしでも read モード時は Write 系が拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=None
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "rm -rf /important"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # コールバックなしでも read モードが優先されて拒否される
+        assert result.outcome.outcome == "cancelled"
