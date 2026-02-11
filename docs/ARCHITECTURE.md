@@ -227,7 +227,7 @@ JSON-RPC over stdio（`acp.transports.StdioTransport`）で ACP Server と通信
 | 型 | 説明 |
 |----|------|
 | `AgentMessageChunk` | エージェントのテキスト応答（バッファリング後に Discord へ送信） |
-| `CurrentModeUpdate` | モデル変更通知（`model_id`, `available_models` を更新） |
+| `CurrentModeUpdate` | セッションモード変更通知（コードモード/会話モード等の切り替え）。モデル変更通知ではない。 |
 | `UsageUpdate` | 使用量更新（`used`, `size`, `cost`）※ ACP SDK 未実装のため独自型定義 |
 | `ToolCallStart` / `ToolCallProgress` | ツール実行状況（ログのみ） |
 | `AgentThoughtChunk` | エージェントの思考内容（ログのみ） |

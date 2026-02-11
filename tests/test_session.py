@@ -498,9 +498,8 @@ class TestSessionModelFeatures:
             "claude-opus-4-6", "test_acp_session_id"
         )
 
-        # セッションのモデル情報はCurrentModeUpdate通知で更新されるため、
-        # この時点ではまだ更新されていない
-        assert session.current_model_id == "claude-sonnet-4-5"
+        # set_model後は楽観的にcurrent_model_idが更新されていること
+        assert session.current_model_id == "claude-opus-4-6"
 
     @pytest.mark.asyncio
     async def test_set_model_invalid_model(

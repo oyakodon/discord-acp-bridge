@@ -581,14 +581,16 @@ class SessionService:
         )
 
         try:
-            # ACP Clientでモデルを変更
+            # ACP Clientでモデルを変更（ACPClient内で楽観的なmodel_id追跡も更新される）
             await acp_client.set_session_model(model_id, session.acp_session_id)
 
-            # セッションのモデル情報は CurrentModeUpdate 通知で更新される
+            # ACP プロトコルにはモデル変更の通知メカニズムが定義されていないため、
+            # ここで楽観的にセッション側のcurrent_model_idも更新する
+            session.current_model_id = model_id
             session.last_activity_at = datetime.now()
 
             logger.info(
-                "Model change requested for session (waiting for confirmation)",
+                "Model changed for session",
                 session_id=session_id,
                 model_id=model_id,
             )
@@ -872,26 +874,16 @@ class SessionService:
             update_type=type(update).__name__,
         )
 
-        # CurrentModeUpdate通知を処理（モデル変更通知）
+        # CurrentModeUpdate通知を処理（モード変更通知）
+        # Note: CurrentModeUpdateはセッションモードの変更通知であり、モデル変更通知ではない。
+        # ACP プロトコルにはモデル変更の通知メカニズムが定義されていないため、
+        # モデル変更後はset_session_model呼び出し側で楽観的に更新する。
         if isinstance(update, CurrentModeUpdate):
-            if update.model_id is not None:
-                logger.info(
-                    "Model changed for session",
-                    session_id=session.id,
-                    model_id=update.model_id,
-                )
-                session.current_model_id = update.model_id
-            # available_modelsフィールドが存在する場合は更新
-            if (
-                hasattr(update, "available_models")
-                and update.available_models is not None
-            ):
-                session.available_models = list(update.available_models)
-                logger.debug(
-                    "Available models updated for session",
-                    session_id=session.id,
-                    available_models=session.available_models,
-                )
+            logger.debug(
+                "Mode changed for session",
+                session_id=session.id,
+                mode_id=update.current_mode_id,
+            )
 
         # UsageUpdate通知を処理（使用量更新通知）
         if isinstance(update, UsageUpdate):

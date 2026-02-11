@@ -25,6 +25,7 @@ from acp.schema import (
     EnvVariable,
     Implementation,
     InitializeResponse,  # noqa: TC001
+    NewSessionResponse,  # noqa: TC001
     PermissionOption,
     SessionInfoUpdate,
     ToolCallProgress,
@@ -127,6 +128,9 @@ class ACPClient:
         self._watchdog_task: asyncio.Task[None] | None = None
         self._last_update_time: float | None = None
         self._init_response: InitializeResponse | None = None
+        self._new_session_response: NewSessionResponse | None = None
+        # set_session_model後の楽観的な現在モデルID追跡
+        self._current_model_id_override: str | None = None
 
         # Clientプロトコルの実装
         self._client_impl = self._create_client_impl()
@@ -347,9 +351,14 @@ class ACPClient:
             cwd=working_directory, mcp_servers=[]
         )
         session_id = session_response.session_id
+        self._new_session_response = session_response
 
         self._acp_session_id = session_id
-        logger.info("Session created", session_id=session_id)
+        logger.info(
+            "Session created",
+            session_id=session_id,
+            has_model_info=session_response.models is not None,
+        )
 
         # Watchdog Timer を開始
         self._start_watchdog()
@@ -406,6 +415,9 @@ class ACPClient:
             model_id=model_id, session_id=session_id
         )
 
+        # ACP プロトコルにはモデル変更の通知メカニズムが定義されていないため、楽観的に更新
+        self._current_model_id_override = model_id
+
         logger.info("Model changed successfully for session", session_id=session_id)
 
     def get_available_models(self) -> list[str]:
@@ -418,20 +430,20 @@ class ACPClient:
         Raises:
             RuntimeError: 初期化されていない場合
         """
-        if self._init_response is None:
+        if self._new_session_response is None:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        session_model_state = getattr(self._init_response, "session_model_state", None)
+        session_model_state = self._new_session_response.models
         if session_model_state is None:
-            logger.warning(
-                "SessionModelState is not available in InitializeResponse",
-                init_response_type=type(self._init_response).__name__,
+            logger.info(
+                "SessionModelState is not available in NewSessionResponse "
+                "(ACP Server does not support model switching); returning empty list",
+                session_id=self._acp_session_id,
             )
             return []
 
-        models: list[str] = session_model_state.available_models
-        return models
+        return [m.model_id for m in session_model_state.available_models]
 
     def get_current_model(self) -> str | None:
         """
@@ -443,20 +455,24 @@ class ACPClient:
         Raises:
             RuntimeError: 初期化されていない場合
         """
-        if self._init_response is None:
+        if self._new_session_response is None:
             msg = "ACP Client is not initialized. Call initialize() first."
             raise RuntimeError(msg)
 
-        session_model_state = getattr(self._init_response, "session_model_state", None)
+        # 楽観的更新が設定されている場合はそれを優先
+        if self._current_model_id_override is not None:
+            return self._current_model_id_override
+
+        session_model_state = self._new_session_response.models
         if session_model_state is None:
-            logger.warning(
-                "SessionModelState is not available in InitializeResponse",
-                init_response_type=type(self._init_response).__name__,
+            logger.info(
+                "SessionModelState is not available in NewSessionResponse "
+                "(ACP Server does not support model switching); returning None",
+                session_id=self._acp_session_id,
             )
             return None
 
-        model_id: str | None = session_model_state.current_model_id
-        return model_id
+        return session_model_state.current_model_id
 
     async def cancel_session(self, session_id: str) -> None:
         """
