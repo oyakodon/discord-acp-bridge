@@ -184,6 +184,9 @@ stateDiagram-v2
 |---------|------|------|
 | `/projects list` | 登録済みプロジェクト一覧を表示 | なし |
 | `/projects new` | 新規プロジェクトディレクトリを作成 | `name: str` |
+| `/projects approve-list` | 自動承認パターン一覧を表示 | `project_id: int` |
+| `/projects approve-add` | 自動承認パターンを追加 | `project_id: int`, `pattern: str` |
+| `/projects approve-remove` | 自動承認パターンを削除 | `project_id: int`, `pattern: str` |
 
 #### `/agent` グループ
 

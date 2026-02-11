@@ -27,7 +27,10 @@ from discord_acp_bridge.application.models import (
     PermissionRequest,  # noqa: TC001
     PermissionResponse,  # noqa: TC001
 )
-from discord_acp_bridge.application.project import Project  # noqa: TC001
+from discord_acp_bridge.application.project import (
+    Project,  # noqa: TC001
+    ProjectService,  # noqa: TC001
+)
 from discord_acp_bridge.infrastructure.acp_client import ACPClient, UsageUpdate
 from discord_acp_bridge.infrastructure.logging import get_logger
 
@@ -169,6 +172,7 @@ class SessionService:
     def __init__(
         self,
         config: Config,
+        project_service: ProjectService | None = None,
         on_message: MessageCallback | None = None,
         on_timeout: TimeoutCallback | None = None,
         on_typing: TypingCallback | None = None,
@@ -179,12 +183,14 @@ class SessionService:
 
         Args:
             config: アプリケーション設定
+            project_service: プロジェクト管理サービス（Auto Approve チェックに使用）
             on_message: ACPからのメッセージ受信時のコールバック
             on_timeout: セッションタイムアウト時のコールバック
             on_typing: タイピングインジケーター制御時のコールバック
             on_permission_request: パーミッション要求時のコールバック
         """
         self._config = config
+        self._project_service = project_service
         self._on_message_callback = on_message
         self._on_timeout_callback = on_timeout
         self._on_typing_callback = on_typing
@@ -1035,6 +1041,22 @@ class SessionService:
                 acp_session_id=acp_session_id,
             )
             return self._auto_approve_permission(options)
+
+        # プロジェクトの Auto Approve パターンをチェック
+        if self._project_service is not None:
+            kind = tool_call.kind or ""
+            raw_input_str = _format_raw_input(tool_call.raw_input)
+            matched_pattern = self._project_service.is_auto_approved(
+                session.project, kind, raw_input_str
+            )
+            if matched_pattern is not None:
+                logger.info(
+                    "Auto-approved permission request by project pattern",
+                    session_id=session.id,
+                    kind=kind,
+                    matched_pattern=matched_pattern,
+                )
+                return self._auto_approve_permission(options)
 
         # ACP型 → 中間型に変換
         perm_request = PermissionRequest(
