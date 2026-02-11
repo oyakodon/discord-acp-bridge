@@ -16,7 +16,10 @@ from discord_acp_bridge.application.project import (
     Project,
     ProjectService,
 )
-from discord_acp_bridge.application.session import SessionService
+from discord_acp_bridge.application.session import (
+    SessionService,
+    _targets_acp_bridge_dir,
+)
 from discord_acp_bridge.infrastructure.config import Config
 
 
@@ -378,3 +381,312 @@ class TestSessionServiceAutoApprove:
 
         # project_service がない場合は Discord UI に委譲する
         permission_callback.assert_called_once()
+
+
+class TestTargetsAcpBridgeDir:
+    """_targets_acp_bridge_dir ヘルパー関数のテスト."""
+
+    def test_unix_path(self) -> None:
+        """Unix形式のパスで .acp-bridge/ を検出する."""
+        assert _targets_acp_bridge_dir("/project/.acp-bridge/auto_approve.json") is True
+
+    def test_windows_path(self) -> None:
+        """Windows形式のパスで .acp-bridge/ を検出する."""
+        assert (
+            _targets_acp_bridge_dir(
+                "C:\\Users\\user\\project\\.acp-bridge\\auto_approve.json"
+            )
+            is True
+        )
+
+    def test_relative_path(self) -> None:
+        """相対パスで .acp-bridge/ を検出する."""
+        assert _targets_acp_bridge_dir(".acp-bridge/auto_approve.json") is True
+
+    def test_directory_without_trailing_slash(self) -> None:
+        """末尾スラッシュなし（ディレクトリ自体への操作）を検出する."""
+        assert _targets_acp_bridge_dir("/project/.acp-bridge") is True
+        assert _targets_acp_bridge_dir(".acp-bridge") is True
+
+    def test_no_false_positive_similar_name(self) -> None:
+        """類似名を誤検出しない."""
+        assert _targets_acp_bridge_dir("/project/acp-bridge/file.txt") is False
+        assert _targets_acp_bridge_dir("/project/.acp-bridge-old/file.txt") is False
+
+    def test_no_false_positive_normal_path(self) -> None:
+        """通常のパスを誤検出しない."""
+        assert _targets_acp_bridge_dir("/project/src/main.py") is False
+        assert _targets_acp_bridge_dir("echo hello") is False
+
+    def test_json_containing_path(self) -> None:
+        """JSON文字列内のパスを検出する."""
+        json_input = '{"file_path": "/project/.acp-bridge/auto_approve.json"}'
+        assert _targets_acp_bridge_dir(json_input) is True
+
+    def test_empty_string(self) -> None:
+        """空文字列はFalseを返す."""
+        assert _targets_acp_bridge_dir("") is False
+
+
+class TestAcpBridgeProtection:
+    """.acp-bridge/ ディレクトリへの操作は Auto Approve をバイパスするテスト."""
+
+    @pytest.mark.asyncio
+    async def test_acp_bridge_target_bypasses_auto_approve(
+        self,
+        config: Config,
+        project: Project,
+        project_service: ProjectService,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """*:* パターンがあっても .acp-bridge/ 操作は Discord UI に委譲される."""
+        from discord_acp_bridge.application.models import PermissionResponse
+
+        # 全許可パターンを設定
+        project_service.add_auto_approve_pattern(project, "*:*")
+
+        # コールバックモック（呼ばれるはず）
+        permission_callback = AsyncMock(
+            return_value=PermissionResponse(approved=True, option_id="opt_1")
+        )
+
+        service = SessionService(
+            config,
+            project_service=project_service,
+            on_permission_request=permission_callback,
+        )
+
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        option = MagicMock()
+        option.option_id = "opt_1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc_1"
+        tool_call.title = "Write"
+        tool_call.kind = "write"
+        tool_call.raw_input = f"{project.path}/.acp-bridge/auto_approve.json"
+        tool_call.content = None
+
+        assert session.acp_session_id is not None
+        await service._handle_permission_request(
+            session.acp_session_id, [option], tool_call
+        )
+
+        # .acp-bridge/ 操作は Discord UI に委譲される
+        permission_callback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_acp_bridge_target_auto_approved(
+        self,
+        config: Config,
+        project: Project,
+        project_service: ProjectService,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """通常のパスは Auto Approve パターンで自動承認される."""
+        # 全許可パターンを設定
+        project_service.add_auto_approve_pattern(project, "*:*")
+
+        # コールバックモック（呼ばれないはず）
+        permission_callback = AsyncMock()
+
+        service = SessionService(
+            config,
+            project_service=project_service,
+            on_permission_request=permission_callback,
+        )
+
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        option = MagicMock()
+        option.option_id = "opt_1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc_1"
+        tool_call.title = "Read"
+        tool_call.kind = "read"
+        tool_call.raw_input = f"{project.path}/src/main.py"
+        tool_call.content = None
+
+        assert session.acp_session_id is not None
+        result = await service._handle_permission_request(
+            session.acp_session_id, [option], tool_call
+        )
+
+        # 通常のパスは自動承認される
+        permission_callback.assert_not_called()
+        from acp.schema import AllowedOutcome
+
+        assert isinstance(result.outcome, AllowedOutcome)
+
+
+class TestAutoApprovePatternSaving:
+    """「常に承認」応答時のパターン自動保存テスト."""
+
+    @pytest.mark.asyncio
+    async def test_always_approve_saves_pattern(
+        self,
+        config: Config,
+        project: Project,
+        project_service: ProjectService,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """「常に承認」応答時にパターンが auto_approve.json に保存される."""
+        from discord_acp_bridge.application.models import PermissionResponse
+
+        # コールバック: auto_approve_pattern 付きの応答を返す
+        permission_callback = AsyncMock(
+            return_value=PermissionResponse(
+                approved=True,
+                option_id="opt_1",
+                auto_approve_pattern="fetch:https://example.com",
+            )
+        )
+
+        service = SessionService(
+            config,
+            project_service=project_service,
+            on_permission_request=permission_callback,
+        )
+
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        option = MagicMock()
+        option.option_id = "opt_1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc_1"
+        tool_call.title = "Fetch"
+        tool_call.kind = "fetch"
+        tool_call.raw_input = "https://example.com"
+        tool_call.content = None
+
+        assert session.acp_session_id is not None
+        await service._handle_permission_request(
+            session.acp_session_id, [option], tool_call
+        )
+
+        # パターンが保存されていることを確認
+        patterns = project_service.get_auto_approve_patterns(project)
+        assert "fetch:https://example.com" in patterns
+
+    @pytest.mark.asyncio
+    async def test_single_approve_does_not_save_pattern(
+        self,
+        config: Config,
+        project: Project,
+        project_service: ProjectService,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """「承認」応答（auto_approve_pattern=None）ではパターンが保存されない."""
+        from discord_acp_bridge.application.models import PermissionResponse
+
+        # コールバック: auto_approve_pattern なしの応答を返す
+        permission_callback = AsyncMock(
+            return_value=PermissionResponse(
+                approved=True,
+                option_id="opt_1",
+                auto_approve_pattern=None,
+            )
+        )
+
+        service = SessionService(
+            config,
+            project_service=project_service,
+            on_permission_request=permission_callback,
+        )
+
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        option = MagicMock()
+        option.option_id = "opt_1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc_1"
+        tool_call.title = "Fetch"
+        tool_call.kind = "fetch"
+        tool_call.raw_input = "https://example.com"
+        tool_call.content = None
+
+        assert session.acp_session_id is not None
+        await service._handle_permission_request(
+            session.acp_session_id, [option], tool_call
+        )
+
+        # パターンが保存されていないことを確認
+        patterns = project_service.get_auto_approve_patterns(project)
+        assert patterns == []
+
+    @pytest.mark.asyncio
+    async def test_pattern_save_failure_does_not_block_response(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """パターン保存失敗時も ACP 応答はブロックされない."""
+        from discord_acp_bridge.application.models import PermissionResponse
+
+        # add_auto_approve_pattern が例外を投げるモック
+        mock_project_service = MagicMock(spec=ProjectService)
+        mock_project_service.is_auto_approved.return_value = None
+        mock_project_service.add_auto_approve_pattern.side_effect = OSError(
+            "disk full"
+        )
+
+        permission_callback = AsyncMock(
+            return_value=PermissionResponse(
+                approved=True,
+                option_id="opt_1",
+                auto_approve_pattern="fetch:https://example.com",
+            )
+        )
+
+        service = SessionService(
+            config,
+            project_service=mock_project_service,
+            on_permission_request=permission_callback,
+        )
+
+        session = await service.create_session(
+            user_id=123, project=project, thread_id=456
+        )
+
+        option = MagicMock()
+        option.option_id = "opt_1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc_1"
+        tool_call.title = "Fetch"
+        tool_call.kind = "fetch"
+        tool_call.raw_input = "https://example.com"
+        tool_call.content = None
+
+        assert session.acp_session_id is not None
+
+        # 例外が発生しても ACP 応答は正常に返る
+        from acp.schema import AllowedOutcome
+
+        result = await service._handle_permission_request(
+            session.acp_session_id, [option], tool_call
+        )
+        assert isinstance(result.outcome, AllowedOutcome)

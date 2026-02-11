@@ -31,7 +31,6 @@ def config(tmp_path: Path) -> Config:
         discord_bot_token="test_token",
         discord_guild_id=123456789,
         discord_allowed_user_id=987654321,
-        projects_file=tmp_path / "projects.json",
     )
     return config
 
@@ -41,7 +40,7 @@ def project(tmp_path: Path) -> Project:
     """テスト用のProjectインスタンスを作成する."""
     project_dir = tmp_path / "test_project"
     project_dir.mkdir()
-    return Project(id=1, path=str(project_dir), is_active=True)
+    return Project(id=1, path=str(project_dir))
 
 
 @pytest.fixture

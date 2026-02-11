@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -1042,10 +1043,20 @@ class SessionService:
             )
             return self._auto_approve_permission(options)
 
+        # .acp-bridge/ ディレクトリへの操作は Auto Approve をバイパスし、
+        # 必ず Discord UI でユーザーに確認を求める
+        raw_input_str = _format_raw_input(tool_call.raw_input)
+        bypass_auto_approve = _targets_acp_bridge_dir(raw_input_str)
+        if bypass_auto_approve:
+            logger.info(
+                "Bypassing auto-approve for .acp-bridge/ target",
+                session_id=session.id,
+                raw_input=raw_input_str[:100],
+            )
+
         # プロジェクトの Auto Approve パターンをチェック
-        if self._project_service is not None:
+        if not bypass_auto_approve and self._project_service is not None:
             kind = tool_call.kind or ""
-            raw_input_str = _format_raw_input(tool_call.raw_input)
             matched_pattern = self._project_service.is_auto_approved(
                 session.project, kind, raw_input_str
             )
@@ -1122,6 +1133,29 @@ class SessionService:
                     session.id, perm_response.instructions
                 )
 
+        # 「常に承認」によるパターン保存
+        # .acp-bridge/ を対象とする操作は保存しても効果がないのでスキップ
+        if (
+            perm_response.auto_approve_pattern
+            and self._project_service is not None
+            and not bypass_auto_approve
+        ):
+            try:
+                self._project_service.add_auto_approve_pattern(
+                    session.project, perm_response.auto_approve_pattern
+                )
+                logger.info(
+                    "Saved auto-approve pattern from UI",
+                    session_id=session.id,
+                    pattern=perm_response.auto_approve_pattern,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to save auto-approve pattern (non-blocking)",
+                    session_id=session.id,
+                    pattern=perm_response.auto_approve_pattern,
+                )
+
         return _RPR(outcome=outcome)
 
     def _find_session_by_acp_id(self, acp_session_id: str) -> Session | None:
@@ -1173,6 +1207,26 @@ class SessionService:
                 )
 
         task.add_done_callback(_handle_task_exception)
+
+
+# パス区切り文字（/ または \）の前後に .acp-bridge が現れるパターン
+# 末尾スラッシュなし（ディレクトリ自体への操作）も検出する
+_ACP_BRIDGE_PATH_PATTERN = re.compile(r"(^|[/\\])\.acp-bridge([/\\]|$)")
+
+
+def _targets_acp_bridge_dir(raw_input: str) -> bool:
+    r"""raw_input が .acp-bridge ディレクトリを対象としているか判定する.
+
+    パス区切り文字（/・\）の前後に .acp-bridge が現れるかをチェックする。
+    末尾スラッシュなし（ディレクトリ自体の操作）も検出対象とする。
+
+    Args:
+        raw_input: ツール呼び出しの入力文字列
+
+    Returns:
+        .acp-bridge を対象としている場合 True
+    """
+    return bool(_ACP_BRIDGE_PATH_PATTERN.search(raw_input))
 
 
 def _format_raw_input(raw_input: object) -> str:

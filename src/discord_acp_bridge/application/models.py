@@ -43,3 +43,4 @@ class PermissionResponse:
     approved: bool
     option_id: str | None = None
     instructions: str | None = None
+    auto_approve_pattern: str | None = None
