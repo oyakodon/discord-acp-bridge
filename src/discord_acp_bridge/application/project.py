@@ -380,7 +380,7 @@ class ProjectService:
                 kind_pat, input_pat = pattern.split(":", 1)
             else:
                 kind_pat, input_pat = pattern, "*"
-            if fnmatch.fnmatch(kind.lower(), kind_pat.lower()) and fnmatch.fnmatch(
+            if fnmatch.fnmatch(kind.lower(), kind_pat.lower()) and fnmatch.fnmatchcase(
                 raw_input, input_pat
             ):
                 return pattern
