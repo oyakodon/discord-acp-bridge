@@ -20,6 +20,7 @@ from discord_acp_bridge.application.session import (
     SessionService,
     SessionState,
     SessionStateError,
+    _resolve_tool_kind,
 )
 from discord_acp_bridge.infrastructure.config import Config
 
@@ -851,3 +852,92 @@ class TestPermissionHandling:
 
         callback.assert_not_called()
         assert result.outcome.outcome == "selected"
+
+    @pytest.mark.asyncio
+    async def test_handle_permission_kind_none_uses_title(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """tool_call.kind が None の場合、title から kind を推測して ToolCallInfo に設定される."""
+        from discord_acp_bridge.application.models import (
+            PermissionRequest,
+            PermissionResponse,
+        )
+
+        captured_request: PermissionRequest | None = None
+
+        async def perm_callback(request: PermissionRequest) -> PermissionResponse:
+            nonlocal captured_request
+            captured_request = request
+            return PermissionResponse(approved=True, option_id="opt-1")
+
+        callback = AsyncMock(side_effect=perm_callback)
+        service = SessionService(config, on_permission_request=callback)
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_once"
+        option.name = "Allow Once"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Write File"
+        tool_call.kind = None  # kind が None のケース
+        tool_call.raw_input = '{"file_path": "/project/main.py", "content": "..."}'
+        tool_call.content = None
+
+        await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        assert captured_request is not None
+        # title "Write File" から "write_file" が推測されること
+        assert captured_request.tool_call.kind == "write_file"
+
+
+class TestResolveToolKind:
+    """_resolve_tool_kind ヘルパー関数のテスト."""
+
+    def test_kind_present_returns_kind(self) -> None:
+        """kind が設定されている場合はそのまま返す."""
+        assert _resolve_tool_kind("bash", "Bash: echo hello") == "bash"
+
+    def test_kind_none_infers_from_title(self) -> None:
+        """kind が None の場合は title から推測する（スペース→アンダースコア、小文字化）."""
+        assert _resolve_tool_kind(None, "Write File") == "write_file"
+
+    def test_kind_none_single_word_title(self) -> None:
+        """単語1つの title は lowercase で返す."""
+        assert _resolve_tool_kind(None, "Bash") == "bash"
+
+    def test_kind_none_title_none(self) -> None:
+        """kind も title も None の場合は 'unknown' を返す."""
+        assert _resolve_tool_kind(None, None) == "unknown"
+
+    def test_kind_empty_string_with_title(self) -> None:
+        """kind が空文字列の場合は title から推測する（空文字列は falsy）."""
+        assert _resolve_tool_kind("", "Read") == "read"
+
+    def test_kind_empty_string_no_title(self) -> None:
+        """kind も title も空の場合は 'unknown' を返す."""
+        assert _resolve_tool_kind("", None) == "unknown"
+
+    def test_kind_none_title_with_leading_trailing_spaces(self) -> None:
+        """title の前後の空白はトリムされる."""
+        assert _resolve_tool_kind(None, "  Edit  ") == "edit"
+
+    def test_kind_none_title_with_colon_strips_after_colon(self) -> None:
+        """title にコロンが含まれる場合、コロン以降を捨てて前半部分のみ使用する."""
+        # "Bash: echo hello" → "bash"（コロン以降を破棄）
+        assert _resolve_tool_kind(None, "Bash: echo hello") == "bash"
+
+    def test_kind_none_title_colon_prefix_only(self) -> None:
+        """コロン以前が空の場合は 'unknown' を返す."""
+        assert _resolve_tool_kind(None, ": something") == "unknown"
+
+    def test_kind_none_title_sanitizes_special_chars(self) -> None:
+        """title に [a-z0-9_] 以外の文字が含まれる場合は除去する."""
+        assert _resolve_tool_kind(None, "Read-File") == "readfile"

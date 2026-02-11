@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 from discord_acp_bridge.application.models import (
@@ -209,3 +211,53 @@ class TestToolCallInfo:
         )
         with pytest.raises(AttributeError):
             info.title = "New Title"  # type: ignore[misc]
+
+
+class TestApproveAlwaysPattern:
+    """「常に承認」ボタンのパターン生成テスト."""
+
+    @pytest.mark.asyncio
+    async def test_approve_always_creates_wildcard_pattern(self) -> None:
+        """「常に承認」ボタンが {kind}:* ワイルドカードパターンを生成することを確認."""
+        request = _make_request(raw_input="echo hello")  # kind="bash"
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[PermissionResponse] = loop.create_future()
+        view = PermissionView(request, future)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.response.edit_message = AsyncMock()
+
+        # @discord.ui.button デコレータはメソッドを Button インスタンスに変換する。
+        # callback は (interaction,) のみを受け取るよう内部で bind される。
+        button_item = discord.utils.get(view.children, label="常に承認")
+        assert button_item is not None
+        await button_item.callback(interaction)
+
+        assert future.done()
+        result = future.result()
+        assert result.approved is True
+        assert result.auto_approve_pattern == "bash:*"
+
+    @pytest.mark.asyncio
+    async def test_approve_always_wildcard_ignores_raw_input(self) -> None:
+        """「常に承認」のパターンは raw_input の内容に依存しない."""
+        large_input = "x" * 500  # 500文字の大きな入力
+        request = _make_request(raw_input=large_input)
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[PermissionResponse] = loop.create_future()
+        view = PermissionView(request, future)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.response.edit_message = AsyncMock()
+
+        button_item = discord.utils.get(view.children, label="常に承認")
+        assert button_item is not None
+        await button_item.callback(interaction)
+
+        result = future.result()
+        # raw_input が大きくても {kind}:* のワイルドカードパターンになる
+        assert result.auto_approve_pattern == "bash:*"
+        # 200文字制限を超えないことを確認
+        assert len(result.auto_approve_pattern) <= 200
