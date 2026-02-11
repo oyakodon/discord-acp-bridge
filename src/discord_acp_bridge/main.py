@@ -39,9 +39,14 @@ async def main() -> None:
         shutdown_event.set()
 
     # シグナルハンドラーを登録（SIGINT + SIGTERM）
+    # Windows では loop.add_signal_handler が未実装のため signal.signal にフォールバック
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, signal_handler)
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, signal_handler)
+    except NotImplementedError:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, lambda s, f: loop.call_soon_threadsafe(signal_handler))
 
     session_service: SessionService | None = None
     bot = None
@@ -121,8 +126,12 @@ async def main() -> None:
                     pass
 
         # シグナルハンドラーの解除
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
+        try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
+        except NotImplementedError:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                signal.signal(sig, signal.SIG_DFL)
 
         logger.info("Shutdown complete")
 
