@@ -78,3 +78,28 @@ def test_config_custom_trusted_paths_single_string(
     config = Config()
 
     assert config.trusted_paths == ["/path/to/projects"]
+
+
+def test_config_default_project_mode_rw(monkeypatch: pytest.MonkeyPatch) -> None:
+    """default_project_mode=rw が正しく設定されることを確認する."""
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test_token")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "123456789")
+    monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
+    monkeypatch.setenv("DEFAULT_PROJECT_MODE", "rw")
+
+    config = Config()
+
+    assert config.default_project_mode == "rw"
+
+
+def test_config_default_project_mode_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """無効な default_project_mode が ValueError を発生させることを確認する."""
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test_token")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "123456789")
+    monkeypatch.setenv("DISCORD_ALLOWED_USER_ID", "987654321")
+    monkeypatch.setenv("DEFAULT_PROJECT_MODE", "invalid_mode")
+
+    with pytest.raises(ValidationError):
+        Config()

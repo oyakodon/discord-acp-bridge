@@ -1061,6 +1061,23 @@ class SessionService:
             ToolCallInfo,
         )
 
+        # セッションを先に検索（read モードチェックを early return より前に行うため）
+        session = self._find_session_by_acp_id(acp_session_id)
+        raw_input_str = _format_raw_input(tool_call.raw_input)
+        kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
+
+        # プロジェクトの権限モードチェック（read モード時は Write 系を自動拒否）
+        # permission_timeout=0 やコールバックなしの場合でも read モードを優先させる
+        if session is not None and self._project_service is not None:
+            mode = self._project_service.get_project_mode(session.project)
+            if mode == ProjectMode.READ and _is_write_operation(kind):
+                logger.info(
+                    "Auto-denied write operation due to read-only project mode",
+                    session_id=session.id,
+                    kind=kind,
+                )
+                return _RPR(outcome=DeniedOutcome(outcome="cancelled"))
+
         # 自動承認: コールバックなし or timeout=0
         if (
             self._on_permission_request_callback is None
@@ -1068,8 +1085,7 @@ class SessionService:
         ):
             return self._auto_approve_permission(options)
 
-        # セッションを検索
-        session = self._find_session_by_acp_id(acp_session_id)
+        # セッション/スレッドが見つからない場合は自動承認
         if session is None or session.thread_id is None:
             logger.warning(
                 "No session/thread for permission request, auto-approving",
@@ -1088,20 +1104,6 @@ class SessionService:
                 session_id=session.id,
                 raw_input=full_raw_input_str[:100],
             )
-
-        # プロジェクトの権限モードチェック（read モード時は Write 系を自動拒否）
-        # Auto Approve より前にチェックし、read モードが Auto Approve より優先される
-        raw_input_str = _format_raw_input(tool_call.raw_input)
-        kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
-        if self._project_service is not None:
-            mode = self._project_service.get_project_mode(session.project)
-            if mode == ProjectMode.READ and _is_write_operation(kind):
-                logger.info(
-                    "Auto-denied write operation due to read-only project mode",
-                    session_id=session.id,
-                    kind=kind,
-                )
-                return _RPR(outcome=DeniedOutcome(outcome="cancelled"))
 
         # プロジェクトの Auto Approve パターンをチェック
         # 既存パターンの多くは表示用に 500 文字へ切り詰めた raw_input を元に構築されているため、

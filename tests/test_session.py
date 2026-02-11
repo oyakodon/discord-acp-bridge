@@ -1117,3 +1117,81 @@ class TestReadModePermission:
 
         callback.assert_not_called()
         assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_denies_write_even_with_timeout_zero(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """permission_timeout=0 でも read モード時は Write 系が拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        config.permission_timeout = 0
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        callback = AsyncMock()
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=callback
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "rm -rf /important"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # permission_timeout=0 でも read モードが優先されて拒否される
+        callback.assert_not_called()
+        assert result.outcome.outcome == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_denies_write_even_without_callback(
+        self,
+        config: Config,
+        project: Project,
+        mock_acp_client: MagicMock,
+    ) -> None:
+        """コールバックなしでも read モード時は Write 系が拒否されることを確認する."""
+        from discord_acp_bridge.application.project import ProjectMode, ProjectService
+
+        project_service = MagicMock(spec=ProjectService)
+        project_service.get_project_mode.return_value = ProjectMode.READ
+
+        service = SessionService(
+            config, project_service=project_service, on_permission_request=None
+        )
+        await service.create_session(user_id=123, project=project, thread_id=456)
+
+        option = MagicMock()
+        option.option_id = "opt-1"
+        option.kind = "allow_always"
+        option.name = "Allow Always"
+
+        tool_call = MagicMock()
+        tool_call.tool_call_id = "tc-001"
+        tool_call.title = "Bash"
+        tool_call.kind = "bash"
+        tool_call.raw_input = "rm -rf /important"
+        tool_call.content = None
+
+        result = await service._handle_permission_request(
+            "test_acp_session_id", [option], tool_call
+        )
+
+        # コールバックなしでも read モードが優先されて拒否される
+        assert result.outcome.outcome == "cancelled"
