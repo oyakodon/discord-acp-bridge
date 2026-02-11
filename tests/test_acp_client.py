@@ -25,12 +25,19 @@ def mock_spawn_agent_process() -> Generator[MagicMock, None, None]:
         mock_connection = MagicMock()
         mock_process = MagicMock()
 
-        # SessionModelState のモック
+        # SessionModelState のモック（NewSessionResponse.models として返す）
+        mock_model_info_sonnet = MagicMock()
+        mock_model_info_sonnet.model_id = "claude-sonnet-4-5"
+        mock_model_info_opus = MagicMock()
+        mock_model_info_opus.model_id = "claude-opus-4-6"
+        mock_model_info_haiku = MagicMock()
+        mock_model_info_haiku.model_id = "claude-haiku-4-5"
+
         mock_session_model_state = MagicMock()
         mock_session_model_state.available_models = [
-            "claude-sonnet-4-5",
-            "claude-opus-4-6",
-            "claude-haiku-4-5",
+            mock_model_info_sonnet,
+            mock_model_info_opus,
+            mock_model_info_haiku,
         ]
         mock_session_model_state.current_model_id = "claude-sonnet-4-5"
 
@@ -38,11 +45,13 @@ def mock_spawn_agent_process() -> Generator[MagicMock, None, None]:
         mock_connection.initialize = AsyncMock(
             return_value=MagicMock(
                 server_info={"name": "test-server"},
-                session_model_state=mock_session_model_state,
             )
         )
         mock_connection.new_session = AsyncMock(
-            return_value=MagicMock(session_id="test-session-123")
+            return_value=MagicMock(
+                session_id="test-session-123",
+                models=mock_session_model_state,
+            )
         )
         mock_connection.prompt = AsyncMock()
         mock_connection.cancel = AsyncMock()
@@ -190,6 +199,9 @@ async def test_set_session_model(
     # 初期化
     await acp_client.initialize("/path/to/project")
 
+    # 変更前の状態を確認
+    assert acp_client.get_current_model() == "claude-sonnet-4-5"
+
     # モデルを変更
     await acp_client.set_session_model("claude-opus-4-6", "test-session-123")
 
@@ -198,6 +210,10 @@ async def test_set_session_model(
     mock_connection.set_session_model.assert_called_once_with(
         model_id="claude-opus-4-6", session_id="test-session-123"
     )
+
+    # 楽観的更新が反映されていることを確認
+    assert acp_client._current_model_id_override == "claude-opus-4-6"
+    assert acp_client.get_current_model() == "claude-opus-4-6"
 
     # クリーンアップ
     await acp_client.close()
@@ -273,14 +289,17 @@ async def test_get_available_models_no_session_model_state(
     acp_client: ACPClient,
     mock_spawn_agent_process: MagicMock,
 ) -> None:
-    """session_model_stateが存在しない場合のget_available_models()テスト."""
+    """NewSessionResponse.modelsがNoneの場合のget_available_models()テスト."""
+    # new_session の戻り値の models を None に設定
+    mock_spawn_agent_process.return_value.__aenter__.return_value[
+        0
+    ].new_session.return_value = MagicMock(
+        session_id="test-session-123",
+        models=None,
+    )
+
     # 初期化
     await acp_client.initialize("/path/to/project")
-
-    # session_model_state 属性を削除して、存在しない状態をシミュレート
-    init_response = acp_client._init_response
-    if init_response is not None and hasattr(init_response, "session_model_state"):
-        delattr(init_response, "session_model_state")
 
     # 利用可能なモデル一覧を取得（空リストが返ることを期待）
     models = acp_client.get_available_models()
@@ -295,14 +314,17 @@ async def test_get_current_model_no_session_model_state(
     acp_client: ACPClient,
     mock_spawn_agent_process: MagicMock,
 ) -> None:
-    """session_model_stateが存在しない場合のget_current_model()テスト."""
+    """NewSessionResponse.modelsがNoneの場合のget_current_model()テスト."""
+    # new_session の戻り値の models を None に設定
+    mock_spawn_agent_process.return_value.__aenter__.return_value[
+        0
+    ].new_session.return_value = MagicMock(
+        session_id="test-session-123",
+        models=None,
+    )
+
     # 初期化
     await acp_client.initialize("/path/to/project")
-
-    # session_model_state 属性を削除して、存在しない状態をシミュレート
-    init_response = acp_client._init_response
-    if init_response is not None and hasattr(init_response, "session_model_state"):
-        delattr(init_response, "session_model_state")
 
     # 現在のモデルを取得（Noneが返ることを期待）
     current_model = acp_client.get_current_model()
