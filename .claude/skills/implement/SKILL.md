@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "このプロジェクトの標準開発フロー（featureブランチ作成 → 実装 → コードレビュー → 修正 → 品質チェック → コミット → squash merge）を一気通貫で実行する。新機能の実装、バグ修正、リファクタリングなどを依頼されたときに使用する。例: /implement セッション管理のリファクタリング"
+description: "このプロジェクトの標準開発フロー（featureブランチ作成 → 実装 → コードレビュー → 修正 → 品質チェック → コミット → PR作成）を一気通貫で実行する。新機能の実装、バグ修正、リファクタリングなどを依頼されたときに使用する。例: /implement セッション管理のリファクタリング"
 ---
 
 # 実装フロー
@@ -41,11 +41,11 @@ uv run ruff check .        # リンティング
 
 - `.claude/*` 以外を適切な粒度でコミット
 
-## Step 7: mainへのsquash merge
+## Step 7: PRの作成
 
 ```bash
-git checkout main
-git merge --squash feature/<feature-name>
-git commit -m "..."
-git branch -D feature/<feature-name>
+git push -u origin feature/<feature-name>
+gh pr create --title "..." --body "..."
 ```
+
+- PR本文には Summary（変更内容の箇条書き）と Test plan（品質チェックのチェックリスト）を含める
