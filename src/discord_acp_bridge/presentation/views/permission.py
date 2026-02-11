@@ -129,9 +129,10 @@ class PermissionView(discord.ui.View):
         option_id = self._find_option_id("allow_always") or self._find_option_id(
             "allow_once"
         )
-        # Auto Approve パターンを構築: {kind}:{raw_input}
+        # Auto Approve パターンを構築: {kind}:* (ワイルドカード)
+        # raw_input は巨大になり得るためワイルドカードで保存する
         tool = self._request.tool_call
-        pattern = f"{tool.kind}:{tool.raw_input}" if tool.raw_input else tool.kind
+        pattern = f"{tool.kind}:*"
         self._resolve(
             PermissionResponse(
                 approved=True, option_id=option_id, auto_approve_pattern=pattern
@@ -139,7 +140,7 @@ class PermissionView(discord.ui.View):
         )
         self.stop()
         await interaction.response.edit_message(
-            content="✅ 常に承認しました。", view=None
+            content=f"✅ 常に承認しました。（パターン: `{pattern}` で記録）", view=None
         )
 
     @discord.ui.button(label="拒否", style=discord.ButtonStyle.danger)

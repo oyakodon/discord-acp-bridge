@@ -1059,7 +1059,7 @@ class SessionService:
         # パターンは表示用（500文字切り詰め）で構築されているため、マッチングも同様に切り詰めた文字列を使用する
         raw_input_str = _format_raw_input(tool_call.raw_input)
         if not bypass_auto_approve and self._project_service is not None:
-            kind = tool_call.kind or ""
+            kind = _resolve_tool_kind(tool_call.kind, tool_call.title)
             matched_pattern = self._project_service.is_auto_approved(
                 session.project, kind, raw_input_str
             )
@@ -1080,7 +1080,7 @@ class SessionService:
             tool_call=ToolCallInfo(
                 tool_call_id=tool_call.tool_call_id,
                 title=tool_call.title or "Unknown",
-                kind=tool_call.kind or "unknown",
+                kind=_resolve_tool_kind(tool_call.kind, tool_call.title),
                 raw_input=_format_raw_input(tool_call.raw_input),
                 content_summary=_format_content_summary(tool_call.content),
             ),
@@ -1263,6 +1263,33 @@ def _format_raw_input(raw_input: object) -> str:
         return json.dumps(raw_input, ensure_ascii=False)[:500]
     except (TypeError, ValueError):
         return str(raw_input)[:500]
+
+
+def _resolve_tool_kind(kind: str | None, title: str | None) -> str:
+    """ツール呼び出しの kind を解決する.
+
+    ACP SDK が kind を返さない場合、title から kind を推測する。
+    title は "Write File" のような形式を想定し、スペースをアンダースコアに変換して
+    小文字化した文字列（例: "write_file"）を返す。
+
+    Args:
+        kind: ツール種別（None または空文字列の場合あり）
+        title: ツールタイトル（フォールバック用）
+
+    Returns:
+        解決された kind 文字列（最低でも "unknown"）
+
+    Note:
+        title から推測した kind（例: "write_file"）は、将来 ACP SDK が
+        kind を直接返すようになった場合の値と一致しない可能性があります。
+        Auto Approve パターンは種別粒度のワイルドカード（"{kind}:*"）で
+        保存されるため、不一致が発生した場合はパターンの再登録が必要です。
+    """
+    if kind:
+        return kind
+    if title:
+        return re.sub(r"\s+", "_", title.strip().lower())
+    return "unknown"
 
 
 def _format_content_summary(content: object) -> str:
