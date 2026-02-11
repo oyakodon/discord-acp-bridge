@@ -1045,16 +1045,19 @@ class SessionService:
 
         # .acp-bridge/ ディレクトリへの操作は Auto Approve をバイパスし、
         # 必ず Discord UI でユーザーに確認を求める
-        raw_input_str = _format_raw_input(tool_call.raw_input)
-        bypass_auto_approve = _targets_acp_bridge_dir(raw_input_str)
+        # セキュリティ上重要なチェックのため、切り詰めなしの全文字列で検査する
+        full_raw_input_str = _raw_input_to_full_str(tool_call.raw_input)
+        bypass_auto_approve = _targets_acp_bridge_dir(full_raw_input_str)
         if bypass_auto_approve:
             logger.info(
                 "Bypassing auto-approve for .acp-bridge/ target",
                 session_id=session.id,
-                raw_input=raw_input_str[:100],
+                raw_input=full_raw_input_str[:100],
             )
 
         # プロジェクトの Auto Approve パターンをチェック
+        # パターンは表示用（500文字切り詰め）で構築されているため、マッチングも同様に切り詰めた文字列を使用する
+        raw_input_str = _format_raw_input(tool_call.raw_input)
         if not bypass_auto_approve and self._project_service is not None:
             kind = tool_call.kind or ""
             matched_pattern = self._project_service.is_auto_approved(
@@ -1209,16 +1212,17 @@ class SessionService:
         task.add_done_callback(_handle_task_exception)
 
 
-# パス区切り文字（/ または \）の前後に .acp-bridge が現れるパターン
+# パス区切り文字（/ または \）、空白、引用符の前後に .acp-bridge が現れるパターン
 # 末尾スラッシュなし（ディレクトリ自体への操作）も検出する
-_ACP_BRIDGE_PATH_PATTERN = re.compile(r"(^|[/\\])\.acp-bridge([/\\]|$)")
+# 例: "rm -rf .acp-bridge"、'cat ".acp-bridge/auto_approve.json"'
+_ACP_BRIDGE_PATH_PATTERN = re.compile(r"(^|[/\\\s\"'])\.acp-bridge([/\\\s\"']|$)")
 
 
 def _targets_acp_bridge_dir(raw_input: str) -> bool:
     r"""raw_input が .acp-bridge ディレクトリを対象としているか判定する.
 
-    パス区切り文字（/・\）の前後に .acp-bridge が現れるかをチェックする。
-    末尾スラッシュなし（ディレクトリ自体の操作）も検出対象とする。
+    パス区切り文字（/・\）、空白、引用符の前後に .acp-bridge が現れるかをチェックする。
+    末尾スラッシュなし（ディレクトリ自体の操作）や bash コマンド内のパスも検出対象とする。
 
     Args:
         raw_input: ツール呼び出しの入力文字列
@@ -1227,6 +1231,24 @@ def _targets_acp_bridge_dir(raw_input: str) -> bool:
         .acp-bridge を対象としている場合 True
     """
     return bool(_ACP_BRIDGE_PATH_PATTERN.search(raw_input))
+
+
+def _raw_input_to_full_str(raw_input: object) -> str:
+    """ToolCallUpdate.raw_input を切り詰めなしで文字列に変換する（セキュリティ検査用）.
+
+    セキュリティ上重要なチェック（.acp-bridge/ バイパス等）に使用する。
+    表示・パターンマッチング目的には _format_raw_input を使用すること。
+    """
+    if raw_input is None:
+        return ""
+    if isinstance(raw_input, str):
+        return raw_input
+    import json
+
+    try:
+        return json.dumps(raw_input, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(raw_input)
 
 
 def _format_raw_input(raw_input: object) -> str:

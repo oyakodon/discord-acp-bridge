@@ -213,6 +213,20 @@ class TestIsAutoApproved:
         assert project_service.is_auto_approved(project, "bash", "rm -rf /") == "Bash"
         assert project_service.is_auto_approved(project, "fetch", "https://example.com") is None
 
+    def test_input_case_sensitive(
+        self, project_service: ProjectService, project: Project
+    ) -> None:
+        """raw_input のマッチングは大文字小文字を区別する（fnmatchcase）."""
+        project_service.add_auto_approve_pattern(project, "Read:/path/File.py")
+
+        # 完全一致はマッチ
+        assert (
+            project_service.is_auto_approved(project, "read", "/path/File.py")
+            == "Read:/path/File.py"
+        )
+        # 大文字小文字が異なる場合はマッチしない
+        assert project_service.is_auto_approved(project, "read", "/path/file.py") is None
+
     def test_multiple_patterns_any_match(
         self, project_service: ProjectService, project: Project
     ) -> None:
@@ -407,6 +421,16 @@ class TestTargetsAcpBridgeDir:
         """末尾スラッシュなし（ディレクトリ自体への操作）を検出する."""
         assert _targets_acp_bridge_dir("/project/.acp-bridge") is True
         assert _targets_acp_bridge_dir(".acp-bridge") is True
+
+    def test_bash_command_with_space(self) -> None:
+        """bash コマンド内のパス（空白区切り）を検出する."""
+        assert _targets_acp_bridge_dir("rm -rf .acp-bridge") is True
+        assert _targets_acp_bridge_dir("ls /project/.acp-bridge") is True
+
+    def test_quoted_path(self) -> None:
+        """引用符で囲まれたパスを検出する."""
+        assert _targets_acp_bridge_dir('cat ".acp-bridge/auto_approve.json"') is True
+        assert _targets_acp_bridge_dir("cat '.acp-bridge/auto_approve.json'") is True
 
     def test_no_false_positive_similar_name(self) -> None:
         """類似名を誤検出しない."""

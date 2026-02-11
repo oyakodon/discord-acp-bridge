@@ -252,7 +252,7 @@ class ProjectService:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 return [str(p) for p in data if isinstance(p, str)]
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             logger.warning(
                 "Failed to read auto_approve.json", path=str(path), exc_info=True
             )
